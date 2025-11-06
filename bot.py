@@ -1043,11 +1043,26 @@ async def run_item_db(
    # ----- TYPE FILTER -----
 
           
+
         def matches_filters(text: str) -> bool:
             text = text_cleanup(text)
-            stat_match = any(p.search(text) for p in stat_patterns) if stat_patterns else True
+        
+            # ❌ Exclude "Skill: STA" or similar false positives
+            if stat_patterns:
+                # Check if any stat pattern matches
+                stat_match = any(p.search(text) for p in stat_patterns)
+        
+                # Additional exclusion for cases like "Skill: STA" or "Skill: STR"
+                for p in stat_patterns:
+                    if re.search(rf"Skill:\s*{p.pattern.strip(r'\\b')}", text, re.IGNORECASE):
+                        stat_match = False
+                        break
+            else:
+                stat_match = True
+        
             class_match = any(p.search(text) for p in class_patterns) if class_patterns else True
             return stat_match and class_match
+
 
         db_rows = [r for r in db_rows if matches_filters(r.get("item_stats") or "")]
 
