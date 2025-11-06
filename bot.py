@@ -967,14 +967,14 @@ async def run_item_db(
         params.extend([f"%{search_query}%", f"%{search_query}%", f"%{search_query}%"])
 
     if slot:
-    # Special handling for Primary / Secondary to search item_stats instead
-    slot_lower = slot.lower()
-    if slot_lower in ("primary", "secondary"):
-        where_clauses.append("item_stats ILIKE $%d" % (len(params)+1))
-        params.append(f"%{slot}%")
-    else:
-        where_clauses.append("LOWER(item_slot) = LOWER($%d)" % (len(params)+1))
-        params.append(slot)
+      # Special handling for Primary / Secondary to search item_stats instead
+      slot_lower = slot.lower()
+      if slot_lower in ("primary", "secondary"):
+          where_clauses.append("item_stats ILIKE $%d" % (len(params)+1))
+          params.append(f"%{slot}%")
+      else:
+          where_clauses.append("LOWER(item_slot) = LOWER($%d)" % (len(params)+1))
+          params.append(slot)
 
 
     # Only this guild and global entries
@@ -1053,9 +1053,16 @@ async def run_item_db(
 
        
 
+       
         if not db_rows:
-            await interaction.edit_original_response(content="❌ No items found matching your search and filters.")
-            return
+          try:
+              # 👇 Send a follow-up message instead of replacing the view
+              await interaction.followup.send("❌ No items found matching your search and filters.", ephemeral=True)
+          except discord.errors.InteractionResponded:
+              # Fallback in case of double response
+              await interaction.channel.send(f"{interaction.user.mention} ❌ No items found matching your search and filters.", delete_after=8)
+          return
+
 
         # --- Step 6: Format and display results ---
         results = [
