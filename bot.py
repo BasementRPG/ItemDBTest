@@ -1086,7 +1086,7 @@ async def run_item_db(
                 )
         
                 # Inform user with popup + refresh the view
-                await interaction.followup.send("❌ No items found matching your search and filters. Try adjusting your filters below:", ephemeral=True)
+                await interaction.followup.send("❌ No items found matching your search and filters. Try adjusting your filters:", ephemeral=True)
                 await interaction.edit_original_response(content=prompt, embeds=[], view=new_filter_view)
             except discord.errors.InteractionResponded:
                 await interaction.followup.send("❌ No items found. Relaunching filters...", ephemeral=True)
