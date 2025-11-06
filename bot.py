@@ -1941,6 +1941,16 @@ class WikiSelectView(discord.ui.View):
                 discord.SelectOption(label="STA", value="STA"),
                 discord.SelectOption(label="STR", value="STR"),
                 discord.SelectOption(label="WIS", value="WIS"),
+                discord.SelectOption(label="SV Cold", value="SV Cold"),
+                discord.SelectOption(label="SV Corruption", value="SV Corruption"),
+                discord.SelectOption(label="SV Disease", value="SV Disease"),
+                discord.SelectOption(label="SV Electricity", value="SV Electricity"),
+                discord.SelectOption(label="SV Fire", value="SV Fire"),
+                discord.SelectOption(label="SV Holy", value="SV Holy"),
+                discord.SelectOption(label="SV Magic", value="SV Magic"),
+                discord.SelectOption(label="SV Poison", value="SV Poison"),
+                
+              
             ]
         )
         self.stat_select.callback = self.select_stat
