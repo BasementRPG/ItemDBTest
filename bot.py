@@ -1,4 +1,4 @@
-aimport os
+import os
 import math
 import discord
 import re
