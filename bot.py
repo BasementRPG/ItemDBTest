@@ -1,4 +1,4 @@
-import os
+aimport os
 import math
 import discord
 import re
@@ -36,7 +36,7 @@ RACE_OPTIONS = ["DDF","DEF","DGN","DWF","ELF","GNM","GOB","HFL","HIE","HUM","ORG
 CLASS_OPTIONS = ["ARC", "BRD", "BST", "CLR", "DRU", "ELE", "ENC", "FTR", "INQ", "MNK", "NEC", "PAL", "RNG", "ROG", "SHD", "SHM", "SPB", "WIZ"]
 ITEM_SLOTS = ["Ammo","Back","Chest","Ear","Face","Feet","Finger","Hands","Head","Legs","Neck","Primary","Range","Secondary","Shirt","Shoulders","Waist","Wrist",
               "1H Bludgeoning","2H Bludgeoning","1H Piercing","2H Piercing","1H Slashing","2H Slashing"]
-ITEM_STATS = ["AGI","CHA","DEX","INT","STA","STR","WIS","HP","Mana","Hp Regen","Mana Regen","Haste","Spell Haste","SV Cold","SV Corruption","SV Disease","SV Electricity","SV Fire","SV Holy","SV Magic","SV Poison"]
+ITEM_STATS = ["AGI","CHA","DEX","INT","STA","STR","WIS","HP","Mana","Hp Regeneration","Mana Regeneration","Haste","Spell Haste","SV Cold","SV Corruption","SV Disease","SV Electricity","SV Fire","SV Holy","SV Magic","SV Poison"]
 
 intents = discord.Intents.default()
 intents.message_content = True
@@ -2002,8 +2002,8 @@ class WikiSelectView(discord.ui.View):
                 discord.SelectOption(label="WIS", value="WIS"),
                 discord.SelectOption(label="HP", value="HP"),
                 discord.SelectOption(label="Mana", value="Mana"),
-                discord.SelectOption(label="HP Regen", value="HP Regen"),
-                discord.SelectOption(label="Mana Regen", value="Mana Regen"),
+                discord.SelectOption(label="HP Regen", value="HP Regeneration"),
+                discord.SelectOption(label="Mana Regen", value="Mana Regeneration"),
                 discord.SelectOption(label="Haste", value="Haste"),
                 discord.SelectOption(label="Spell Haste", value="Spell Haste"),
                 discord.SelectOption(label="SV Cold", value="SV Cold"),
