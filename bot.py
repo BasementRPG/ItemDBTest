@@ -1014,20 +1014,25 @@ async def run_item_db(
 
       
                 # --- Stat filtering (with special handling for Haste / Spell Haste) ---
+
         stat_patterns = []
         if stat:
             stat_filter = str(stat).strip().lower()
 
             if stat_filter == "haste":
-                # Match 'Haste' as a full word, but not 'Spell Haste' or 'Skill: Haste'
-                stat_patterns = [re.compile(r"\bHaste\b(?!:)", re.IGNORECASE)]
+                # Match Haste but NOT Spell Haste or Skill: Haste
+                stat_patterns = [
+                    re.compile(r"(?<!Spell\s)Haste(?!\s*\w)", re.IGNORECASE)
+                ]
 
             elif stat_filter == "spell haste":
-                # Match only 'Spell Haste'
-                stat_patterns = [re.compile(r"\bSpell Haste\b(?!:)", re.IGNORECASE)]
+                # Match only Spell Haste
+                stat_patterns = [
+                    re.compile(r"\bSpell\s+Haste\b", re.IGNORECASE)
+                ]
 
             else:
-                # Generic fallback patterns for standard stats
+                # Generic fallback patterns for other stats
                 stat_keywords = {
                     "str": [r"\bstr\b", r"\bstrength\b"],
                     "agi": [r"\bagi\b", r"\bagility\b"],
@@ -1036,8 +1041,11 @@ async def run_item_db(
                     "sta": [r"\bsta\b", r"\bstamina\b"],
                     "wis": [r"\bwis\b", r"\bwisdom\b"],
                 }
-                stat_patterns = [re.compile(pat, re.IGNORECASE)
-                                 for pat in stat_keywords.get(stat_filter, [rf"\b{stat_filter}\b"])]
+                stat_patterns = [
+                    re.compile(pat, re.IGNORECASE)
+                    for pat in stat_keywords.get(stat_filter, [rf"{re.escape(stat_filter)}"])
+                ]
+
 
         class_patterns = []
         if classes:
