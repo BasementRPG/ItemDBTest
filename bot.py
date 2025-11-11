@@ -1011,21 +1011,33 @@ async def run_item_db(
         elif tf == "quested":
             db_rows = [r for r in db_rows if has_value(r["quest_name"])]
         # "all" = keep everything
-      
 
+      
+                # --- Stat filtering (with special handling for Haste / Spell Haste) ---
         stat_patterns = []
         if stat:
             stat_filter = str(stat).strip().lower()
-            stat_keywords = {
-                "str": [r"\bstr\b", r"\bstrength\b"],
-                "agi": [r"\bagi\b", r"\bagility\b"],
-                "dex": [r"\bdex\b", r"\bdexterity\b"],
-                "int": [r"\bint\b", r"\bintelligence\b"],
-                "sta": [r"\bsta\b", r"\bstamina\b"],
-                "wis": [r"\bwis\b", r"\bwisdom\b"],
-            }
-            stat_patterns = [re.compile(pat, re.IGNORECASE)
-                             for pat in stat_keywords.get(stat_filter, [rf"\b{stat_filter}\b"])]
+
+            if stat_filter == "haste":
+                # Match 'Haste' as a full word, but not 'Spell Haste' or 'Skill: Haste'
+                stat_patterns = [re.compile(r"\bHaste\b(?!:)", re.IGNORECASE)]
+
+            elif stat_filter == "spell haste":
+                # Match only 'Spell Haste'
+                stat_patterns = [re.compile(r"\bSpell Haste\b(?!:)", re.IGNORECASE)]
+
+            else:
+                # Generic fallback patterns for standard stats
+                stat_keywords = {
+                    "str": [r"\bstr\b", r"\bstrength\b"],
+                    "agi": [r"\bagi\b", r"\bagility\b"],
+                    "dex": [r"\bdex\b", r"\bdexterity\b"],
+                    "int": [r"\bint\b", r"\bintelligence\b"],
+                    "sta": [r"\bsta\b", r"\bstamina\b"],
+                    "wis": [r"\bwis\b", r"\bwisdom\b"],
+                }
+                stat_patterns = [re.compile(pat, re.IGNORECASE)
+                                 for pat in stat_keywords.get(stat_filter, [rf"\b{stat_filter}\b"])]
 
         class_patterns = []
         if classes:
