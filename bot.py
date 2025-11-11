@@ -36,7 +36,7 @@ RACE_OPTIONS = ["DDF","DEF","DGN","DWF","ELF","GNM","GOB","HFL","HIE","HUM","ORG
 CLASS_OPTIONS = ["ARC", "BRD", "BST", "CLR", "DRU", "ELE", "ENC", "FTR", "INQ", "MNK", "NEC", "PAL", "RNG", "ROG", "SHD", "SHM", "SPB", "WIZ"]
 ITEM_SLOTS = ["Ammo","Back","Chest","Ear","Face","Feet","Finger","Hands","Head","Legs","Neck","Primary","Range","Secondary","Shirt","Shoulders","Waist","Wrist",
               "1H Bludgeoning","2H Bludgeoning","1H Piercing","2H Piercing","1H Slashing","2H Slashing"]
-ITEM_STATS = ["AGI","CHA","DEX","INT","STA","STR","WIS","HP","Mana","SV Cold","SV Corruption","SV Disease","SV Electricity","SV Fire","SV Holy","SV Magi","SV Poison"]
+ITEM_STATS = ["AGI","CHA","DEX","INT","STA","STR","WIS","HP","Mana","Hp Regen","Mana Regen","Haste","Spell Haste","SV Cold","SV Corruption","SV Disease","SV Electricity","SV Fire","SV Holy","SV Magic","SV Poison"]
 
 intents = discord.Intents.default()
 intents.message_content = True
@@ -1962,6 +1962,7 @@ class WikiSelectView(discord.ui.View):
                 discord.SelectOption(label="Back", value="Back"),
                 discord.SelectOption(label="Chest", value="Chest"),
                 discord.SelectOption(label="Ear", value="Ear"),
+                discord.SelectOption(label="Face", value="Face"),
                 discord.SelectOption(label="Feet", value="Feet"),
                 discord.SelectOption(label="Finger", value="Finger"),
                 discord.SelectOption(label="Hands", value="Hands"),
@@ -1999,6 +2000,12 @@ class WikiSelectView(discord.ui.View):
                 discord.SelectOption(label="STA", value="STA"),
                 discord.SelectOption(label="STR", value="STR"),
                 discord.SelectOption(label="WIS", value="WIS"),
+                discord.SelectOption(label="HP", value="HP"),
+                discord.SelectOption(label="Mana", value="Mana"),
+                discord.SelectOption(label="HP Regen", value="HP Regen"),
+                discord.SelectOption(label="Mana Regen", value="Mana Regen"),
+                discord.SelectOption(label="Haste", value="Haste"),
+                discord.SelectOption(label="Spell Haste", value="Spell Haste"),
                 discord.SelectOption(label="SV Cold", value="SV Cold"),
                 discord.SelectOption(label="SV Corruption", value="SV Corruption"),
                 discord.SelectOption(label="SV Disease", value="SV Disease"),
