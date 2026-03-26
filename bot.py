@@ -966,7 +966,15 @@ async def run_item_db(
         where_clauses.append("(item_name ILIKE $%d OR npc_name ILIKE $%d OR zone_name ILIKE $%d)" % (len(params)+1, len(params)+2, len(params)+3))
         params.extend([f"%{search_query}%", f"%{search_query}%", f"%{search_query}%"])
 
-  
+    if slot:
+      # Special handling for Primary / Secondary to search item_stats instead
+      slot_lower = slot.lower()
+      if slot_lower in ("primary", "secondary"):
+          where_clauses.append("item_stats ILIKE $%d" % (len(params)+1))
+          params.append(f"%{slot}%")
+      else:
+          where_clauses.append("LOWER(item_slot) = LOWER($%d)" % (len(params)+1))
+          params.append(slot)
 
 
     # Only this guild and global entries
