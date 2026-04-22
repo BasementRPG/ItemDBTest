@@ -36,7 +36,7 @@ RACE_OPTIONS = ["DDF","DEF","DGN","DWF","ELF","GNM","GOB","HFL","HIE","HUM","ORG
 CLASS_OPTIONS = ["ARC", "BRD", "BST", "CLR", "DRU", "ELE", "ENC", "FTR", "INQ", "MNK", "NEC", "PAL", "RNG", "ROG", "SHD", "SHM", "SPB", "WIZ"]
 ITEM_SLOTS = ["Ammo","Back","Bag","Chest","Ear","Face","Feet","Finger","Hands","Head","Legs","Neck","Primary","Range","Secondary","Shirt","Shoulders","Waist","Wrist",
               "1H Bludgeoning","2H Bludgeoning","1H Piercing","2H Piercing","1H Slashing","2H Slashing"]
-ITEM_STATS = ["AGI","CHA","DEX","INT","STA","STR","WIS","HP","Mana","Hp Regeneration","Mana Regeneration","Haste","Spell Haste","SV Cold","SV Corruption","SV Disease","SV Electricity","SV Fire","SV Holy","SV Magic","SV Poison"]
+ITEM_STATS = ["AGI","CHA","DEX","INT","STA","STR","WIS","HP","Mana","Hp Regeneration","Mana Regeneration","Haste","Ranged Haste","Spell Haste","SV Cold","SV Corruption","SV Disease","SV Electricity","SV Fire","SV Holy","SV Magic","SV Poison"]
 
 intents = discord.Intents.default()
 intents.message_content = True
@@ -969,8 +969,9 @@ async def run_item_db(
     if slot:
       # Special handling for Primary / Secondary to search item_stats instead
       slot_lower = slot.lower()
-      if slot_lower in ("primary", "secondary"):
-          where_clauses.append("(item_stats ILIKE $%d OR item_slot ILIKE $%d)" % (len(params)+1, len(params)+2))
+      if slot_lower in ("primary", "secondary", "range"):
+          where_clauses.append("(item_stats ILIKE $%d OR item_slot ILIKE $%d)" % (len(params)+1, len(params)+2), len(params)+3)
+          params.append(f"%{slot}%")
           params.append(f"%{slot}%")
           params.append(f"%{slot}%")
       else:
@@ -1030,6 +1031,11 @@ async def run_item_db(
                 # Match only Spell Haste
                 stat_patterns = [
                     re.compile(r"\bSpell\s+Haste\b", re.IGNORECASE)
+                ]
+            elif stat_filter == "ranged haste":
+                # Match only Ranged Haste
+                stat_patterns = [
+                    re.compile(r"\bRanged\s+Haste\b", re.IGNORECASE)
                 ]
 
             else:
@@ -2027,6 +2033,7 @@ class WikiSelectView(discord.ui.View):
                 discord.SelectOption(label="HP Regen", value="HP Regeneration"),
                 discord.SelectOption(label="Mana Regen", value="Mana Regeneration"),
                 discord.SelectOption(label="Haste", value="Haste"),
+                discord.SelectOption(label="Ranged Haste", value="Ranged Haste"),
                 discord.SelectOption(label="Spell Haste", value="Spell Haste"),
                 discord.SelectOption(label="SV Cold", value="SV Cold"),
                 discord.SelectOption(label="SV Corruption", value="SV Corruption"),
