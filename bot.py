@@ -2870,6 +2870,489 @@ async def run_update_db(interaction: discord.Interaction):
 
 
 
+# ============================================================
+# ======================= MAP SYSTEM =========================
+# ============================================================
+
+async def ensure_maps_table():
+    """
+    Create the maps table if it does not already exist.
+
+    This is intentionally separate from the existing database setup
+    so none of the previous code needs to be changed.
+    """
+    async with db_pool.acquire() as conn:
+        await conn.execute("""
+            CREATE TABLE IF NOT EXISTS maps (
+                id BIGSERIAL PRIMARY KEY,
+                guild_id BIGINT NOT NULL,
+                zone_name TEXT NOT NULL,
+                map_image TEXT NOT NULL,
+                map_msg_id BIGINT,
+                added_by TEXT,
+                created_at TIMESTAMP DEFAULT NOW(),
+                updated_at TIMESTAMP DEFAULT NOW(),
+
+                UNIQUE (guild_id, zone_name)
+            )
+        """)
+
+
+# ------------------------------------------------------------
+# MAP DROPDOWN
+# ------------------------------------------------------------
+
+class MapsZoneSelect(discord.ui.Select):
+    def __init__(self, parent_view, zones):
+        self.parent_view = parent_view
+
+        options = []
+
+        for zone in zones:
+            options.append(
+                discord.SelectOption(
+                    label=zone[:100],
+                    value=zone
+                )
+            )
+
+        super().__init__(
+            placeholder="🗺️ Select a Zone",
+            options=options,
+            min_values=1,
+            max_values=1
+        )
+
+    async def callback(self, interaction: discord.Interaction):
+        zone_name = self.values[0]
+
+        await interaction.response.defer()
+
+        try:
+            async with db_pool.acquire() as conn:
+                map_row = await conn.fetchrow("""
+                    SELECT id, zone_name, map_image, map_msg_id
+                    FROM maps
+                    WHERE guild_id = $1
+                      AND zone_name = $2
+                    LIMIT 1
+                """, interaction.guild.id, zone_name)
+
+            if not map_row:
+                await interaction.followup.send(
+                    f"❌ No map was found for **{zone_name}**.",
+                    ephemeral=True
+                )
+                return
+
+            embed = discord.Embed(
+                title=f"🗺️ {map_row['zone_name']}",
+                color=discord.Color.blurple()
+            )
+
+            map_image_url = map_row["map_image"]
+
+            # Try to retrieve the current attachment URL from the
+            # upload-log message. This keeps the stored map tied
+            # to the actual uploaded Discord message.
+            if map_row["map_msg_id"]:
+                try:
+                    upload_channel = await ensure_upload_channel1(
+                        interaction.guild
+                    )
+
+                    map_message = await upload_channel.fetch_message(
+                        int(map_row["map_msg_id"])
+                    )
+
+                    if map_message.attachments:
+                        map_image_url = map_message.attachments[0].url
+
+                except Exception as e:
+                    print(
+                        f"⚠️ Could not refresh map attachment URL "
+                        f"for {zone_name}: {e}"
+                    )
+
+            if map_image_url:
+                embed.set_image(url=map_image_url)
+
+            embed.set_footer(
+                text=f"Zone Map • {map_row['zone_name']}"
+            )
+
+            # Recreate the zone selector so the user can choose
+            # another map without running /maps again.
+            await interaction.edit_original_response(
+                embeds=[embed],
+                view=self.parent_view
+            )
+
+        except Exception as e:
+            print(f"❌ Error loading map: {e}")
+
+            await interaction.followup.send(
+                "❌ Something went wrong while loading this map.",
+                ephemeral=True
+            )
+
+
+# ------------------------------------------------------------
+# MAPS VIEW
+# ------------------------------------------------------------
+
+class MapsView(discord.ui.View):
+    def __init__(self, zones, current_page=0):
+        super().__init__(timeout=900)
+
+        self.zones = zones
+        self.current_page = current_page
+        self.zones_per_page = 25
+
+        self.total_pages = max(
+            1,
+            math.ceil(len(self.zones) / self.zones_per_page)
+        )
+
+        # Keep page in bounds
+        if self.current_page >= self.total_pages:
+            self.current_page = self.total_pages - 1
+
+        start = self.current_page * self.zones_per_page
+        end = start + self.zones_per_page
+
+        current_zones = self.zones[start:end]
+
+        # Zone dropdown
+        self.add_item(
+            MapsZoneSelect(
+                self,
+                current_zones
+            )
+        )
+
+        # Previous button
+        previous_button = discord.ui.Button(
+            label="⬅️ Previous",
+            style=discord.ButtonStyle.secondary,
+            disabled=(self.current_page <= 0)
+        )
+
+        async def previous_callback(
+            interaction: discord.Interaction
+        ):
+            if self.current_page > 0:
+                self.current_page -= 1
+
+                new_view = MapsView(
+                    self.zones,
+                    self.current_page
+                )
+
+                await interaction.response.edit_message(
+                    view=new_view
+                )
+
+        previous_button.callback = previous_callback
+        self.add_item(previous_button)
+
+        # Next button
+        next_button = discord.ui.Button(
+            label="➡️ Next",
+            style=discord.ButtonStyle.primary,
+            disabled=(self.current_page >= self.total_pages - 1)
+        )
+
+        async def next_callback(
+            interaction: discord.Interaction
+        ):
+            if self.current_page < self.total_pages - 1:
+                self.current_page += 1
+
+                new_view = MapsView(
+                    self.zones,
+                    self.current_page
+                )
+
+                await interaction.response.edit_message(
+                    view=new_view
+                )
+
+        next_button.callback = next_callback
+        self.add_item(next_button)
+
+        # Close button
+        close_button = discord.ui.Button(
+            label="❌ Close",
+            style=discord.ButtonStyle.danger
+        )
+
+        async def close_callback(
+            interaction: discord.Interaction
+        ):
+            await interaction.response.edit_message(
+                content="🗺️ Map viewer closed.",
+                embeds=[],
+                view=None
+            )
+
+        close_button.callback = close_callback
+        self.add_item(close_button)
+
+
+# ------------------------------------------------------------
+# /maps
+# ------------------------------------------------------------
+
+@bot.tree.command(
+    name="maps",
+    description="View maps by zone."
+)
+async def maps(interaction: discord.Interaction):
+
+    try:
+        # Make sure the new table exists.
+        await ensure_maps_table()
+
+        async with db_pool.acquire() as conn:
+            rows = await conn.fetch("""
+                SELECT zone_name
+                FROM maps
+                WHERE guild_id = $1
+                ORDER BY zone_name ASC
+            """, interaction.guild.id)
+
+        if not rows:
+            await interaction.response.send_message(
+                "🗺️ There are currently no maps in the database.",
+                ephemeral=True
+            )
+            return
+
+        zones = [
+            row["zone_name"]
+            for row in rows
+            if row["zone_name"]
+        ]
+
+        view = MapsView(zones)
+
+        await interaction.response.send_message(
+            "🗺️ **Select a Zone to View Its Map:**",
+            view=view
+        )
+
+    except Exception as e:
+        print(f"❌ /maps error: {e}")
+
+        if not interaction.response.is_done():
+            await interaction.response.send_message(
+                "❌ Something went wrong while loading the maps.",
+                ephemeral=True
+            )
+        else:
+            await interaction.followup.send(
+                "❌ Something went wrong while loading the maps.",
+                ephemeral=True
+            )
+
+
+# ------------------------------------------------------------
+# /mapadd
+# ------------------------------------------------------------
+
+@bot.tree.command(
+    name="mapadd",
+    description="Add a map image for a zone."
+)
+@app_commands.describe(
+    zone_name="The name of the zone",
+    map_image="Upload the zone map image"
+)
+async def mapadd(
+    interaction: discord.Interaction,
+    zone_name: str,
+    map_image: discord.Attachment
+):
+
+    # Clean up the zone name
+    zone_name = format_item_name(
+        zone_name.strip()
+    )
+
+    # Require an image
+    if not map_image:
+        await interaction.response.send_message(
+            "❌ A map image is required.",
+            ephemeral=True
+        )
+        return
+
+    # Make sure this is actually an image
+    if not map_image.content_type or not map_image.content_type.startswith("image/"):
+        await interaction.response.send_message(
+            "❌ The uploaded file must be an image.",
+            ephemeral=True
+        )
+        return
+
+    try:
+        # Make sure maps table exists
+        await ensure_maps_table()
+
+        guild = interaction.guild
+
+        # Use the SAME upload channel as the existing
+        # item database image system.
+        upload_channel = await ensure_upload_channel1(guild)
+
+        # Check for an existing map first
+        async with db_pool.acquire() as conn:
+            existing = await conn.fetchrow("""
+                SELECT id, map_msg_id
+                FROM maps
+                WHERE guild_id = $1
+                  AND LOWER(TRIM(zone_name)) = LOWER(TRIM($2))
+                LIMIT 1
+            """, guild.id, zone_name)
+
+        if existing:
+            await interaction.response.send_message(
+                f"❌ A map for **{zone_name}** already exists.",
+                ephemeral=True
+            )
+            return
+
+        # Acknowledge while we upload
+        await interaction.response.defer(
+            ephemeral=True,
+            thinking=True
+        )
+
+        # Upload the map to the existing hidden upload channel
+        map_message = await upload_channel.send(
+            file=await map_image.to_file(),
+            content=(
+                f"🗺️ **Uploaded Zone Map**\n"
+                f"**Zone:** {zone_name}\n"
+                f"**Added by:** {interaction.user.mention}"
+            )
+        )
+
+        if not map_message.attachments:
+            await interaction.edit_original_response(
+                content="❌ The map image could not be uploaded."
+            )
+            return
+
+        map_image_url = map_message.attachments[0].url
+        map_msg_id = map_message.id
+
+        # Save the map in the database
+        try:
+            async with db_pool.acquire() as conn:
+                await conn.execute("""
+                    INSERT INTO maps (
+                        guild_id,
+                        zone_name,
+                        map_image,
+                        map_msg_id,
+                        added_by,
+                        created_at,
+                        updated_at
+                    )
+                    VALUES ($1, $2, $3, $4, $5, NOW(), NOW())
+                """,
+                    guild.id,
+                    zone_name,
+                    map_image_url,
+                    map_msg_id,
+                    str(interaction.user)
+                )
+
+        except Exception as db_error:
+
+            # If the database save failed, delete the uploaded image
+            # so we don't leave an orphaned upload.
+            try:
+                await map_message.delete()
+            except Exception as cleanup_error:
+                print(
+                    f"⚠️ Could not delete failed map upload: "
+                    f"{cleanup_error}"
+                )
+
+            print(
+                f"❌ Map database error: {db_error}"
+            )
+
+            await interaction.edit_original_response(
+                content=(
+                    "❌ The map image uploaded successfully, "
+                    "but the database entry could not be saved."
+                )
+            )
+            return
+
+        # Success
+        embed = discord.Embed(
+            title="🗺️ Map Added",
+            description=(
+                f"**Zone:** {zone_name}\n"
+                f"**Added by:** {interaction.user.mention}"
+            ),
+            color=discord.Color.green()
+        )
+
+        embed.set_image(url=map_image_url)
+
+        await interaction.edit_original_response(
+            content=None,
+            embed=embed
+        )
+
+        print(
+            f"✅ Added map: {zone_name} "
+            f"(Guild: {guild.id})"
+        )
+
+    except discord.Forbidden:
+        await interaction.edit_original_response(
+            content=(
+                "❌ I don't have permission to upload "
+                "files to the map upload channel."
+            )
+        )
+
+    except Exception as e:
+        print(f"❌ /mapadd error: {e}")
+
+        try:
+            if interaction.response.is_done():
+                await interaction.followup.send(
+                    f"❌ Map upload failed: {e}",
+                    ephemeral=True
+                )
+            else:
+                await interaction.response.send_message(
+                    f"❌ Map upload failed: {e}",
+                    ephemeral=True
+                )
+        except Exception as response_error:
+            print(
+                f"⚠️ Could not send map error response: "
+                f"{response_error}"
+            )
+
+
+# ============================================================
+# ===================== END MAP SYSTEM =======================
+# ============================================================
+
+
+
+
+
 # ---------------- Bot Setup ----------------
 
 @bot.event
