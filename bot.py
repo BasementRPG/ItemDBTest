@@ -5212,7 +5212,7 @@ async def get_class_spells(
     return rows
 
 # ============================================================
-# SPELL RESULTS EMBED
+# SPELL RESULTS MESSAGE
 # ============================================================
 
 def create_spells_embed(
@@ -5247,32 +5247,27 @@ def create_spells_embed(
         start:end
     ]
 
-    embed = discord.Embed(
-        title=(
-            f"📖 {class_name} "
-            f"Spells & Abilities"
-        ),
-        description=(
-            f"**{range_name}**\n\n"
-            "━━━━━━━━━━━━━━━━━━━━"
-        )
+    # --------------------------------------------------------
+    # HEADER
+    # --------------------------------------------------------
+
+    message = (
+        f"📖 **{class_name} — {range_name}**\n\n"
     )
 
     if not page_spells:
 
-        embed.add_field(
-            name="No Spells Found",
-            value=(
-                "No spells or abilities were "
-                "found for this level range."
-            ),
-            inline=False
+        message += (
+            "━━━━━━━━━━━━━━━━━━━━\n"
+            "**No Spells Found**\n"
+            "━━━━━━━━━━━━━━━━━━━━\n\n"
+            "No spells or abilities were found "
+            "for this level range."
         )
 
-        return embed
+        return message
 
     current_level = None
-    level_text = ""
 
     for spell in page_spells:
 
@@ -5305,31 +5300,24 @@ def create_spells_embed(
         )
 
         # ----------------------------------------------------
-        # NEW LEVEL HEADER
+        # LEVEL HEADER
         # ----------------------------------------------------
 
         if level != current_level:
 
-            if level_text:
-
-                embed.add_field(
-                    name="\u200b",
-                    value=level_text,
-                    inline=False
-                )
-
             current_level = level
 
-            level_text = (
+            message += (
+                "━━━━━━━━━━━━━━━━━━━━\n"
                 f"**LEVEL {level}**\n"
                 "━━━━━━━━━━━━━━━━━━━━\n\n"
             )
 
         # ----------------------------------------------------
-        # SPELL ENTRY
+        # SPELL
         # ----------------------------------------------------
 
-        level_text += (
+        message += (
             f"**{spell_name}**\n\n"
             f"**Description:** {description}\n\n"
             f"**Class:** {spell_class}  |  "
@@ -5338,29 +5326,16 @@ def create_spells_embed(
         )
 
     # --------------------------------------------------------
-    # ADD FINAL LEVEL
+    # FOOTER
     # --------------------------------------------------------
 
-    if level_text:
-
-        embed.add_field(
-            name="\u200b",
-            value=level_text,
-            inline=False
-        )
-
-    # --------------------------------------------------------
-    # PAGINATION
-    # --------------------------------------------------------
-
-    embed.set_footer(
-        text=(
-            f"Page {page + 1}/{total_pages} • "
-            f"{len(spells)} total abilities"
-        )
+    message += (
+        "━━━━━━━━━━━━━━━━━━━━\n"
+        f"*Page {page + 1}/{total_pages} • "
+        f"{len(spells)} total abilities*"
     )
 
-    return embed
+    return message
 
 
 # ============================================================
