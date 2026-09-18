@@ -3903,6 +3903,1467 @@ async def mapremove(
 # ============================================================
 
 
+
+
+# ============================================================
+# =================== SPELL / ABILITY SYSTEM =================
+# ============================================================
+
+# ------------------------------------------------------------
+# CLASS NAME -> WIKI PAGE NAME
+# ------------------------------------------------------------
+
+SPELL_CLASS_NAMES = {
+    "ARC": "Archer",
+    "BRD": "Bard",
+    "BST": "Beastmaster",
+    "CLR": "Cleric",
+    "DRU": "Druid",
+    "ELE": "Elementalist",
+    "ENC": "Enchanter",
+    "FTR": "Fighter",
+    "INQ": "Inquisitor",
+    "MNK": "Monk",
+    "NEC": "Necromancer",
+    "PAL": "Paladin",
+    "RNG": "Ranger",
+    "ROG": "Rogue",
+    "SHD": "Shadow Knight",
+    "SHM": "Shaman",
+    "SPB": "Spellblade",
+    "WIZ": "Wizard"
+}
+
+
+# ============================================================
+# SPELL DATABASE TABLE
+# ============================================================
+
+async def ensure_spells_table():
+
+    async with db_pool.acquire() as conn:
+
+        await conn.execute("""
+            CREATE TABLE IF NOT EXISTS class_spells (
+                id BIGSERIAL PRIMARY KEY,
+                class_code TEXT NOT NULL,
+                class_name TEXT NOT NULL,
+                spell_name TEXT NOT NULL,
+                level INTEGER,
+                spell_type TEXT,
+                description TEXT,
+                effects TEXT,
+                mana TEXT,
+                cast_time TEXT,
+                duration TEXT,
+                target TEXT,
+                wiki_url TEXT,
+                created_at TIMESTAMP DEFAULT NOW(),
+                updated_at TIMESTAMP DEFAULT NOW()
+            )
+        """)
+
+        await conn.execute("""
+            CREATE INDEX IF NOT EXISTS
+            class_spells_class_level_index
+            ON class_spells (class_code, level)
+        """)
+
+
+# ============================================================
+# SPELL LEVEL OPTIONS
+# ============================================================
+
+SPELL_LEVEL_OPTIONS = (
+    list(range(1, 21))
+    + [25, 30, 35, 40, 45, 50, 55, 60]
+)
+
+
+# ============================================================
+# SPELL DATABASE CLEANING
+# ============================================================
+
+def clean_spell_text(value):
+
+    if value is None:
+        return ""
+
+    value = str(value)
+
+    value = value.replace("\xa0", " ")
+    value = value.replace("\r", " ")
+    value = value.replace("\n", " ")
+
+    value = re.sub(r"\s+", " ", value)
+
+    return value.strip()
+
+
+def get_spell_level(value):
+
+    if value is None:
+        return None
+
+    text = clean_spell_text(value)
+
+    # Examples:
+    # 1
+    # Level 1
+    # Lvl 10
+    # 10th
+    # Level 10-20
+
+    match = re.search(
+        r"\b(?:level|lvl|lv)?\s*(\d+)",
+        text,
+        re.IGNORECASE
+    )
+
+    if match:
+        try:
+            return int(match.group(1))
+        except Exception:
+            return None
+
+    # Fall back to any number in the cell
+    match = re.search(r"\d+", text)
+
+    if match:
+        try:
+            return int(match.group())
+        except Exception:
+            return None
+
+    return None
+
+
+# ============================================================
+# FIND COLUMN
+# ============================================================
+
+def find_table_column(headers, possible_names):
+
+    for index, header in enumerate(headers):
+
+        header_clean = clean_spell_text(header).lower()
+
+        for name in possible_names:
+
+            if name.lower() == header_clean:
+                return index
+
+    # Partial match fallback
+    for index, header in enumerate(headers):
+
+        header_clean = clean_spell_text(header).lower()
+
+        for name in possible_names:
+
+            if name.lower() in header_clean:
+                return index
+
+    return None
+
+
+# ============================================================
+# SCRAPE CLASS SPELLS
+# ============================================================
+
+async def scrape_class_spells(class_code):
+
+    if class_code not in SPELL_CLASS_NAMES:
+
+        print(
+            f"❌ Unknown spell class code: {class_code}"
+        )
+
+        return []
+
+    class_name = SPELL_CLASS_NAMES[class_code]
+
+    wiki_url = (
+        "https://monstersandmemories.miraheze.org/wiki/"
+        + class_name.replace(" ", "_")
+    )
+
+    print(
+        f"🌐 Scraping spells for {class_name}: "
+        f"{wiki_url}"
+    )
+
+    headers = {
+        "User-Agent": (
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+            "AppleWebKit/537.36 "
+            "(KHTML, like Gecko) "
+            "Chrome/120.0.0.0 Safari/537.36"
+        ),
+        "Accept-Language": "en-US,en;q=0.9"
+    }
+
+    html = None
+
+    # --------------------------------------------------------
+    # Try aiohttp first
+    # --------------------------------------------------------
+
+    try:
+
+        async with aiohttp.ClientSession(
+            headers=headers
+        ) as session:
+
+            async with session.get(
+                wiki_url,
+                ssl=False,
+                timeout=60
+            ) as response:
+
+                if response.status == 200:
+
+                    html = await response.text()
+
+                else:
+
+                    print(
+                        f"⚠️ Wiki returned HTTP "
+                        f"{response.status}"
+                    )
+
+    except Exception as e:
+
+        print(
+            f"⚠️ aiohttp wiki request failed: {e}"
+        )
+
+    # --------------------------------------------------------
+    # Playwright fallback
+    # --------------------------------------------------------
+
+    if not html:
+
+        try:
+
+            async with async_playwright() as p:
+
+                browser = await p.chromium.launch(
+                    headless=True,
+                    args=["--no-sandbox"]
+                )
+
+                page = await browser.new_page()
+
+                await page.goto(
+                    wiki_url,
+                    timeout=60000,
+                    wait_until="networkidle"
+                )
+
+                html = await page.content()
+
+                await browser.close()
+
+        except Exception as e:
+
+            print(
+                f"❌ Playwright wiki request failed: {e}"
+            )
+
+            return []
+
+    # --------------------------------------------------------
+    # Parse page
+    # --------------------------------------------------------
+
+    soup = BeautifulSoup(
+        html,
+        "html.parser"
+    )
+
+    spells = []
+
+    # --------------------------------------------------------
+    # Look through all wiki tables
+    # --------------------------------------------------------
+
+    tables = soup.find_all("table")
+
+    print(
+        f"🔎 Found {len(tables)} tables on "
+        f"{class_name} page."
+    )
+
+    for table in tables:
+
+        # ----------------------------------------------------
+        # Determine section heading for this table
+        # ----------------------------------------------------
+
+        section_name = ""
+
+        previous_heading = table.find_previous(
+            ["h1", "h2", "h3", "h4"]
+        )
+
+        if previous_heading:
+
+            section_name = clean_spell_text(
+                previous_heading.get_text(" ", strip=True)
+            )
+
+        section_lower = section_name.lower()
+
+        # ----------------------------------------------------
+        # Only process tables that appear to contain
+        # spell / ability information.
+        # ----------------------------------------------------
+
+        table_text = clean_spell_text(
+            table.get_text(" ", strip=True)
+        ).lower()
+
+        spell_keywords = [
+            "spell",
+            "ability",
+            "level",
+            "mana",
+            "cast",
+            "duration",
+            "target"
+        ]
+
+        keyword_matches = sum(
+            1
+            for keyword in spell_keywords
+            if keyword in table_text
+        )
+
+        if keyword_matches == 0:
+            continue
+
+        # ----------------------------------------------------
+        # Get rows
+        # ----------------------------------------------------
+
+        rows = table.find_all("tr")
+
+        if not rows:
+            continue
+
+        # ----------------------------------------------------
+        # Find header row
+        # ----------------------------------------------------
+
+        header_row = None
+        headers = []
+
+        for row in rows:
+
+            cells = row.find_all(
+                ["th", "td"]
+            )
+
+            if not cells:
+                continue
+
+            row_headers = [
+                clean_spell_text(
+                    cell.get_text(" ", strip=True)
+                )
+                for cell in cells
+            ]
+
+            row_lower = " ".join(
+                row_headers
+            ).lower()
+
+            if (
+                "level" in row_lower
+                or "spell" in row_lower
+                or "ability" in row_lower
+            ):
+
+                header_row = row
+                headers = row_headers
+                break
+
+        if not headers:
+            continue
+
+        # ----------------------------------------------------
+        # Identify columns
+        # ----------------------------------------------------
+
+        level_index = find_table_column(
+            headers,
+            [
+                "Level",
+                "Lvl",
+                "Lv"
+            ]
+        )
+
+        name_index = find_table_column(
+            headers,
+            [
+                "Spell",
+                "Spell Name",
+                "Ability",
+                "Ability Name",
+                "Name"
+            ]
+        )
+
+        description_index = find_table_column(
+            headers,
+            [
+                "Description",
+                "Desc"
+            ]
+        )
+
+        effects_index = find_table_column(
+            headers,
+            [
+                "Effects",
+                "Effect"
+            ]
+        )
+
+        mana_index = find_table_column(
+            headers,
+            [
+                "Mana",
+                "Mana Cost",
+                "Cost"
+            ]
+        )
+
+        cast_time_index = find_table_column(
+            headers,
+            [
+                "Cast Time",
+                "Cast"
+            ]
+        )
+
+        duration_index = find_table_column(
+            headers,
+            [
+                "Duration"
+            ]
+        )
+
+        target_index = find_table_column(
+            headers,
+            [
+                "Target"
+            ]
+        )
+
+        # ----------------------------------------------------
+        # If there isn't an obvious name column, try the
+        # first non-level column.
+        # ----------------------------------------------------
+
+        if name_index is None:
+
+            for index, header in enumerate(headers):
+
+                if index == level_index:
+                    continue
+
+                if header.strip():
+
+                    name_index = index
+                    break
+
+        if name_index is None:
+            continue
+
+        # ----------------------------------------------------
+        # Process data rows
+        # ----------------------------------------------------
+
+        for row in rows:
+
+            if row == header_row:
+                continue
+
+            cells = row.find_all(
+                ["td", "th"]
+            )
+
+            if not cells:
+                continue
+
+            values = [
+                clean_spell_text(
+                    cell.get_text(
+                        " ",
+                        strip=True
+                    )
+                )
+                for cell in cells
+            ]
+
+            # Need at least enough data for a name
+            if name_index >= len(values):
+                continue
+
+            spell_name = values[name_index].strip()
+
+            if not spell_name:
+                continue
+
+            # ------------------------------------------------
+            # Skip obvious header/repeated header rows
+            # ------------------------------------------------
+
+            if spell_name.lower() in (
+                "spell",
+                "spell name",
+                "ability",
+                "ability name",
+                "name"
+            ):
+                continue
+
+            # ------------------------------------------------
+            # Determine level
+            # ------------------------------------------------
+
+            level = None
+
+            if (
+                level_index is not None
+                and level_index < len(values)
+            ):
+
+                level = get_spell_level(
+                    values[level_index]
+                )
+
+            # ------------------------------------------------
+            # If no level column was found, attempt to find
+            # a level from the row itself.
+            # ------------------------------------------------
+
+            if level is None:
+
+                for value in values:
+
+                    possible_level = get_spell_level(
+                        value
+                    )
+
+                    if possible_level is not None:
+
+                        # Only use it if it looks like a
+                        # standalone level.
+                        if re.search(
+                            r"\b(?:level|lvl|lv)\b",
+                            value,
+                            re.IGNORECASE
+                        ):
+
+                            level = possible_level
+                            break
+
+            # ------------------------------------------------
+            # Ignore rows without a usable level.
+            # ------------------------------------------------
+
+            if level is None:
+                continue
+
+            # ------------------------------------------------
+            # Determine spell type
+            # ------------------------------------------------
+
+            spell_type = "Spell"
+
+            if (
+                "ability" in section_lower
+                and "spell" not in section_lower
+            ):
+
+                spell_type = "Ability"
+
+            elif "ability" in table_text:
+
+                spell_type = "Ability"
+
+            # ------------------------------------------------
+            # Pull values
+            # ------------------------------------------------
+
+            def get_value(index):
+
+                if (
+                    index is not None
+                    and index < len(values)
+                ):
+                    return values[index]
+
+                return ""
+
+            description = get_value(
+                description_index
+            )
+
+            effects = get_value(
+                effects_index
+            )
+
+            mana = get_value(
+                mana_index
+            )
+
+            cast_time = get_value(
+                cast_time_index
+            )
+
+            duration = get_value(
+                duration_index
+            )
+
+            target = get_value(
+                target_index
+            )
+
+            # ------------------------------------------------
+            # Build wiki URL
+            # ------------------------------------------------
+
+            spell_link = wiki_url
+
+            # If the spell name is linked on the page,
+            # use the actual spell page URL.
+            name_cell = cells[name_index]
+
+            link = name_cell.find(
+                "a",
+                href=True
+            )
+
+            if link:
+
+                href = link["href"]
+
+                if href.startswith("//"):
+
+                    spell_link = (
+                        "https:" + href
+                    )
+
+                elif href.startswith("/"):
+
+                    spell_link = (
+                        "https://monstersandmemories.miraheze.org"
+                        + href
+                    )
+
+                elif href.startswith("http"):
+
+                    spell_link = href
+
+            # ------------------------------------------------
+            # Save result
+            # ------------------------------------------------
+
+            spells.append({
+                "class_code": class_code,
+                "class_name": class_name,
+                "spell_name": spell_name,
+                "level": level,
+                "spell_type": spell_type,
+                "description": description,
+                "effects": effects,
+                "mana": mana,
+                "cast_time": cast_time,
+                "duration": duration,
+                "target": target,
+                "wiki_url": spell_link
+            })
+
+    # --------------------------------------------------------
+    # Remove duplicates
+    # --------------------------------------------------------
+
+    unique_spells = {}
+
+    for spell in spells:
+
+        key = (
+            spell["spell_name"].strip().lower(),
+            spell["level"]
+        )
+
+        unique_spells[key] = spell
+
+    spells = list(
+        unique_spells.values()
+    )
+
+    spells.sort(
+        key=lambda x: (
+            x["level"],
+            x["spell_name"].lower()
+        )
+    )
+
+    print(
+        f"✅ Scraped {len(spells)} "
+        f"spells/abilities for {class_name}."
+    )
+
+    return spells
+
+
+# ============================================================
+# SAVE / REPLACE CLASS SPELLS
+# ============================================================
+
+async def replace_class_spells(
+    class_code,
+    spells
+):
+
+    class_name = SPELL_CLASS_NAMES[class_code]
+
+    async with db_pool.acquire() as conn:
+
+        async with conn.transaction():
+
+            # ------------------------------------------------
+            # Delete existing records for this class
+            # ------------------------------------------------
+
+            await conn.execute(
+                """
+                DELETE FROM class_spells
+                WHERE class_code = $1
+                """,
+                class_code
+            )
+
+            # ------------------------------------------------
+            # Insert fresh records
+            # ------------------------------------------------
+
+            for spell in spells:
+
+                await conn.execute(
+                    """
+                    INSERT INTO class_spells (
+                        class_code,
+                        class_name,
+                        spell_name,
+                        level,
+                        spell_type,
+                        description,
+                        effects,
+                        mana,
+                        cast_time,
+                        duration,
+                        target,
+                        wiki_url,
+                        created_at,
+                        updated_at
+                    )
+                    VALUES (
+                        $1,
+                        $2,
+                        $3,
+                        $4,
+                        $5,
+                        $6,
+                        $7,
+                        $8,
+                        $9,
+                        $10,
+                        $11,
+                        $12,
+                        NOW(),
+                        NOW()
+                    )
+                    """,
+                    spell["class_code"],
+                    spell["class_name"],
+                    spell["spell_name"],
+                    spell["level"],
+                    spell["spell_type"],
+                    spell["description"],
+                    spell["effects"],
+                    spell["mana"],
+                    spell["cast_time"],
+                    spell["duration"],
+                    spell["target"],
+                    spell["wiki_url"]
+                )
+
+    return len(spells)
+
+
+# ============================================================
+# WIKI SPELL CLASS SELECT
+# ============================================================
+
+class WikiSpellsClassSelect(discord.ui.Select):
+
+    def __init__(self):
+
+        options = []
+
+        for class_code, class_name in SPELL_CLASS_NAMES.items():
+
+            options.append(
+                discord.SelectOption(
+                    label=class_name,
+                    value=class_code
+                )
+            )
+
+        super().__init__(
+            placeholder="Select a class",
+            options=options,
+            min_values=1,
+            max_values=1
+        )
+
+
+# ============================================================
+# /wikispells VIEW
+# ============================================================
+
+class WikiSpellsView(discord.ui.View):
+
+    def __init__(self):
+
+        super().__init__(timeout=300)
+
+        self.class_code = None
+
+        self.add_item(
+            WikiSpellsClassSelect()
+        )
+
+
+# ============================================================
+# WIKI SPELLS SELECT CALLBACK
+# ============================================================
+
+async def wiki_spells_class_callback(
+    interaction: discord.Interaction
+):
+
+    pass
+
+
+# Replace the automatically generated callback with one
+# attached directly to the select.
+
+async def wiki_spells_select_callback(
+    interaction: discord.Interaction
+):
+
+    select = None
+
+    for child in interaction.message.components:
+
+        for component in child.children:
+
+            if component.custom_id == "wiki_spells_class_select":
+                select = component
+                break
+
+    await interaction.response.defer(
+        ephemeral=True
+    )
+
+
+# ============================================================
+# CUSTOM CLASS SELECT
+# ============================================================
+
+class WikiSpellsClassSelect(discord.ui.Select):
+
+    def __init__(self):
+
+        options = []
+
+        for class_code, class_name in SPELL_CLASS_NAMES.items():
+
+            options.append(
+                discord.SelectOption(
+                    label=class_name,
+                    value=class_code
+                )
+            )
+
+        super().__init__(
+            placeholder="Select a class to scrape",
+            options=options,
+            min_values=1,
+            max_values=1,
+            custom_id="wiki_spells_class_select"
+        )
+
+    async def callback(
+        self,
+        interaction: discord.Interaction
+    ):
+
+        class_code = self.values[0]
+
+        class_name = SPELL_CLASS_NAMES[class_code]
+
+        await interaction.response.defer(
+            ephemeral=True,
+            thinking=True
+        )
+
+        await ensure_spells_table()
+
+        try:
+
+            print(
+                f"🌐 Starting spell scrape for "
+                f"{class_name}"
+            )
+
+            spells = await scrape_class_spells(
+                class_code
+            )
+
+            if not spells:
+
+                await interaction.followup.send(
+                    (
+                        f"❌ No spells or abilities were "
+                        f"found for **{class_name}**.\n\n"
+                        f"Wiki page:\n"
+                        f"https://monstersandmemories.miraheze.org/"
+                        f"wiki/{class_name.replace(' ', '_')}"
+                    ),
+                    ephemeral=True
+                )
+
+                return
+
+            count = await replace_class_spells(
+                class_code,
+                spells
+            )
+
+            # ------------------------------------------------
+            # Count spells vs abilities
+            # ------------------------------------------------
+
+            spell_count = sum(
+                1
+                for spell in spells
+                if spell["spell_type"] == "Spell"
+            )
+
+            ability_count = sum(
+                1
+                for spell in spells
+                if spell["spell_type"] == "Ability"
+            )
+
+            max_level = max(
+                spell["level"]
+                for spell in spells
+            )
+
+            await interaction.followup.send(
+                (
+                    f"✅ **{class_name}** spell database "
+                    f"updated!\n\n"
+                    f"📚 Total: **{count}**\n"
+                    f"✨ Spells: **{spell_count}**\n"
+                    f"⚔️ Abilities: **{ability_count}**\n"
+                    f"📊 Highest Level: **{max_level}**\n\n"
+                    f"All previous **{class_name}** records "
+                    f"were replaced with the fresh wiki data."
+                ),
+                ephemeral=True
+            )
+
+        except Exception as e:
+
+            print(
+                f"❌ Wiki spell scrape failed: {e}"
+            )
+
+            import traceback
+            traceback.print_exc()
+
+            await interaction.followup.send(
+                (
+                    f"❌ Failed to scrape **{class_name}**.\n\n"
+                    f"Error: `{e}`"
+                ),
+                ephemeral=True
+            )
+
+
+# ============================================================
+# /wikispells
+# ============================================================
+
+@bot.tree.command(
+    name="wikispells",
+    description="Scrape spells and abilities for a class from the wiki."
+)
+async def wikispells(
+    interaction: discord.Interaction
+):
+
+    await ensure_spells_table()
+
+    view = WikiSpellsView()
+
+    await interaction.response.send_message(
+        (
+            "🌐 **Wiki Spell Database**\n\n"
+            "Select a class below.\n"
+            "The wiki will be scraped and all existing "
+            "spells/abilities for that class will be replaced."
+        ),
+        view=view,
+        ephemeral=True
+    )
+
+
+# ============================================================
+# SPELL SEARCH - CLASS SELECT
+# ============================================================
+
+class SpellsClassSelect(discord.ui.Select):
+
+    def __init__(self, parent_view):
+
+        self.parent_view = parent_view
+
+        options = []
+
+        for class_code, class_name in SPELL_CLASS_NAMES.items():
+
+            options.append(
+                discord.SelectOption(
+                    label=class_name,
+                    value=class_code
+                )
+            )
+
+        super().__init__(
+            placeholder="Select a class",
+            options=options,
+            min_values=1,
+            max_values=1,
+            row=0
+        )
+
+    async def callback(
+        self,
+        interaction: discord.Interaction
+    ):
+
+        self.parent_view.class_code = self.values[0]
+
+        self.parent_view.class_name = (
+            SPELL_CLASS_NAMES[
+                self.values[0]
+            ]
+        )
+
+        await interaction.response.edit_message(
+            content=(
+                f"📚 **Spells & Abilities**\n\n"
+                f"Class: **{self.parent_view.class_name}**\n"
+                f"Minimum Level: "
+                f"**{self.parent_view.min_level}**\n"
+                f"Maximum Level: "
+                f"**{self.parent_view.max_level}**"
+            ),
+            view=self.parent_view
+        )
+
+
+# ============================================================
+# MIN LEVEL SELECT
+# ============================================================
+
+class SpellsMinLevelSelect(discord.ui.Select):
+
+    def __init__(self, parent_view):
+
+        self.parent_view = parent_view
+
+        options = []
+
+        for level in SPELL_LEVEL_OPTIONS:
+
+            options.append(
+                discord.SelectOption(
+                    label=f"Level {level}",
+                    value=str(level)
+                )
+
+            )
+
+        super().__init__(
+            placeholder="Minimum level",
+            options=options,
+            min_values=1,
+            max_values=1,
+            row=1
+        )
+
+    async def callback(
+        self,
+        interaction: discord.Interaction
+    ):
+
+        self.parent_view.min_level = int(
+            self.values[0]
+        )
+
+        await interaction.response.edit_message(
+            content=(
+                f"📚 **Spells & Abilities**\n\n"
+                f"Class: **{self.parent_view.class_name or 'Not selected'}**\n"
+                f"Minimum Level: "
+                f"**{self.parent_view.min_level}**\n"
+                f"Maximum Level: "
+                f"**{self.parent_view.max_level}**"
+            ),
+            view=self.parent_view
+        )
+
+
+# ============================================================
+# MAX LEVEL SELECT
+# ============================================================
+
+class SpellsMaxLevelSelect(discord.ui.Select):
+
+    def __init__(self, parent_view):
+
+        self.parent_view = parent_view
+
+        options = []
+
+        for level in SPELL_LEVEL_OPTIONS:
+
+            options.append(
+                discord.SelectOption(
+                    label=f"Level {level}",
+                    value=str(level)
+                )
+            )
+
+        super().__init__(
+            placeholder="Maximum level",
+            options=options,
+            min_values=1,
+            max_values=1,
+            row=2
+        )
+
+    async def callback(
+        self,
+        interaction: discord.Interaction
+    ):
+
+        self.parent_view.max_level = int(
+            self.values[0]
+        )
+
+        await interaction.response.edit_message(
+            content=(
+                f"📚 **Spells & Abilities**\n\n"
+                f"Class: **{self.parent_view.class_name or 'Not selected'}**\n"
+                f"Minimum Level: "
+                f"**{self.parent_view.min_level}**\n"
+                f"Maximum Level: "
+                f"**{self.parent_view.max_level}**"
+            ),
+            view=self.parent_view
+        )
+
+
+# ============================================================
+# SPELL SEARCH VIEW
+# ============================================================
+
+class SpellsView(discord.ui.View):
+
+    def __init__(self):
+
+        super().__init__(timeout=600)
+
+        self.class_code = None
+        self.class_name = None
+
+        self.min_level = 1
+        self.max_level = 60
+
+        self.add_item(
+            SpellsClassSelect(self)
+        )
+
+        self.add_item(
+            SpellsMinLevelSelect(self)
+        )
+
+        self.add_item(
+            SpellsMaxLevelSelect(self)
+        )
+
+    # ========================================================
+    # SEARCH BUTTON
+    # ========================================================
+
+    @discord.ui.button(
+        label="Search",
+        emoji="🔍",
+        style=discord.ButtonStyle.primary,
+        row=3
+    )
+    async def search_button(
+        self,
+        interaction: discord.Interaction,
+        button: discord.ui.Button
+    ):
+
+        if not self.class_code:
+
+            await interaction.response.send_message(
+                "❌ Please select a class first.",
+                ephemeral=True
+            )
+
+            return
+
+        if self.min_level > self.max_level:
+
+            await interaction.response.send_message(
+                (
+                    "❌ Minimum level cannot be higher "
+                    "than maximum level."
+                ),
+                ephemeral=True
+            )
+
+            return
+
+        await interaction.response.defer()
+
+        await ensure_spells_table()
+
+        async with db_pool.acquire() as conn:
+
+            rows = await conn.fetch(
+                """
+                SELECT
+                    class_name,
+                    spell_name,
+                    level,
+                    spell_type,
+                    description,
+                    effects,
+                    mana,
+                    cast_time,
+                    duration,
+                    target,
+                    wiki_url
+                FROM class_spells
+                WHERE class_code = $1
+                  AND level >= $2
+                  AND level <= $3
+                ORDER BY
+                    level ASC,
+                    spell_name ASC
+                """,
+                self.class_code,
+                self.min_level,
+                self.max_level
+            )
+
+        if not rows:
+
+            await interaction.edit_original_response(
+                content=(
+                    f"❌ No spells or abilities found for "
+                    f"**{self.class_name}** between "
+                    f"levels **{self.min_level}** and "
+                    f"**{self.max_level}**.\n\n"
+                    f"Use `/wikispells` to scrape the "
+                    f"class from the wiki first."
+                ),
+                view=None
+            )
+
+            return
+
+        # ----------------------------------------------------
+        # Build embeds
+        # ----------------------------------------------------
+
+        embeds = []
+
+        for row in rows:
+
+            title = (
+                f"✨ {row['spell_name']}"
+                if row["spell_type"] == "Spell"
+                else
+                f"⚔️ {row['spell_name']}"
+            )
+
+            embed = discord.Embed(
+                title=title,
+                url=row["wiki_url"],
+                color=discord.Color.blurple()
+            )
+
+            embed.add_field(
+                name="Class",
+                value=row["class_name"],
+                inline=True
+            )
+
+            embed.add_field(
+                name="Level",
+                value=str(row["level"]),
+                inline=True
+            )
+
+            embed.add_field(
+                name="Type",
+                value=row["spell_type"] or "Unknown",
+                inline=True
+            )
+
+            if row["description"]:
+
+                embed.add_field(
+                    name="Description",
+                    value=row["description"][:1024],
+                    inline=False
+                )
+
+            if row["effects"]:
+
+                embed.add_field(
+                    name="Effects",
+                    value=row["effects"][:1024],
+                    inline=False
+                )
+
+            if row["mana"]:
+
+                embed.add_field(
+                    name="Mana",
+                    value=row["mana"],
+                    inline=True
+                )
+
+            if row["cast_time"]:
+
+                embed.add_field(
+                    name="Cast Time",
+                    value=row["cast_time"],
+                    inline=True
+                )
+
+            if row["duration"]:
+
+                embed.add_field(
+                    name="Duration",
+                    value=row["duration"],
+                    inline=True
+                )
+
+            if row["target"]:
+
+                embed.add_field(
+                    name="Target",
+                    value=row["target"],
+                    inline=True
+                )
+
+            embed.set_footer(
+                text="Monsters & Memories Wiki"
+            )
+
+            embeds.append(embed)
+
+        # ----------------------------------------------------
+        # Discord allows 10 embeds per message.
+        # ----------------------------------------------------
+
+        await interaction.edit_original_response(
+            content=(
+                f"📚 **{self.class_name} Spells & Abilities**\n"
+                f"Levels **{self.min_level}–{self.max_level}**\n"
+                f"Found **{len(embeds)}** result(s)."
+            ),
+            embeds=embeds[:10],
+            view=None
+        )
+
+        remaining = embeds[10:]
+
+        while remaining:
+
+            batch = remaining[:10]
+
+            remaining = remaining[10:]
+
+            await interaction.followup.send(
+                embeds=batch
+            )
+
+
+# ============================================================
+# /spells
+# ============================================================
+
+@bot.tree.command(
+    name="spells",
+    description="View class spells and abilities by level."
+)
+async def spells(
+    interaction: discord.Interaction
+):
+
+    await ensure_spells_table()
+
+    view = SpellsView()
+
+    await interaction.response.send_message(
+        (
+            "📚 **Spells & Abilities**\n\n"
+            "Select a **Class**, **Minimum Level**, "
+            "and **Maximum Level**, then press 🔍 **Search**."
+        ),
+        view=view
+    )
+
+
+# ============================================================
+# ================= END SPELL SYSTEM =========================
+# ============================================================
+
+
+
+
 # ---------------- Bot Setup ----------------
 
 @bot.event
