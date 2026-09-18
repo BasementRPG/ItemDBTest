@@ -5034,36 +5034,44 @@ class SpellsSelectionView(View):
         async def view_callback(
             interaction: Interaction
         ):
-
+        
             if not self.selected_class:
-
+        
                 await interaction.response.send_message(
                     "Please select a class first.",
                     ephemeral=True
                 )
-
+        
                 return
-
+        
+            # --------------------------------------------------------
+            # Get the results.
+            # --------------------------------------------------------
+        
             await interaction.response.defer()
-
+        
             spells = await get_class_spells(
                 self.selected_class,
                 self.min_level,
                 self.max_level
             )
-
+        
             embed = create_spells_embed(
                 self.selected_class,
                 spells,
                 self.range_name,
                 0
             )
-
-            # ------------------------------------------------
-            # PUBLIC RESULT
-            # ------------------------------------------------
-
-            await interaction.followup.send(
+        
+            # --------------------------------------------------------
+            # REPLACE THE ORIGINAL /SPELLS MESSAGE.
+            #
+            # Do NOT followup.send().
+            # This edits the existing public selection message.
+            # --------------------------------------------------------
+        
+            await interaction.edit_original_response(
+                content=None,
                 embed=embed,
                 view=SpellsResultsView(
                     self.selected_class,
@@ -5071,8 +5079,7 @@ class SpellsSelectionView(View):
                     self.range_name,
                     0,
                     public=True
-                ),
-                ephemeral=False
+                )
             )
 
         view_button.callback = (
