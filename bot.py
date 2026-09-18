@@ -5293,7 +5293,7 @@ def create_spells_embed(
             spell_title = f"**{spell_name}**"
         
         entry += (
-            f"{spell_title}\n\n"
+            f"{spell_title}\n"
             f"**Description:** {description}\n"
             f"**Class:** {spell_class}  |  "
             f"**Location:** {location}  |  "
