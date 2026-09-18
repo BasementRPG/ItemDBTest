@@ -4741,7 +4741,7 @@ SPELL_LEVEL_RANGES = [
 
 
 # ============================================================
-# SPELL CLASS SELECT
+# /SPELLS INITIAL CLASS + LEVEL SELECTION
 # ============================================================
 
 class SpellsClassSelect(Select):
@@ -4771,62 +4771,663 @@ class SpellsClassSelect(Select):
         interaction: Interaction
     ):
 
-        selected_class = self.values[0]
+        self.view.selected_class = self.values[0]
 
+        # Keep the initial message NON-EMBEDDED.
         await interaction.response.edit_message(
-            content=None,
-            embed=self.view.create_embed(
-                selected_class
-            ),
-            view=SpellsLevelView(
-                selected_class
-            )
+            content=self.view.get_content(),
+            embed=None,
+            view=self.view
         )
 
 
-class SpellsClassView(View):
+class SpellsLevelSelect(Select):
 
     def __init__(self):
+
+        options = []
+
+        for label, min_level, max_level in SPELL_LEVEL_RANGES:
+
+            if label == "All":
+
+                options.append(
+                    SelectOption(
+                        label="All",
+                        value="all",
+                        default=True
+                    )
+                )
+
+            else:
+
+                options.append(
+                    SelectOption(
+                        label=f"Level {label}",
+                        value=f"{min_level}-{max_level}"
+                    )
+                )
+
+        super().__init__(
+            placeholder="All Levels",
+            min_values=1,
+            max_values=1,
+            options=options
+        )
+
+    async def callback(
+        self,
+        interaction: Interaction
+    ):
+
+        selected = self.values[0]
+
+        if selected == "all":
+
+            self.view.min_level = 1
+            self.view.max_level = 60
+            self.view.range_name = "All Levels"
+
+        else:
+
+            parts = selected.split("-")
+
+            self.view.min_level = int(parts[0])
+            self.view.max_level = int(parts[1])
+
+            self.view.range_name = (
+                f"Levels {parts[0]}–{parts[1]}"
+            )
+
+        await interaction.response.edit_message(
+            content=self.view.get_content(),
+            embed=None,
+            view=self.view
+        )
+
+
+class SpellsSelectionView(View):
+
+    def __init__(
+        self,
+        selected_class=None
+    ):
 
         super().__init__(
             timeout=300
         )
 
-    def create_embed(
-        self,
-        selected_class=None
-    ):
+        self.selected_class = selected_class
 
-        embed = discord.Embed(
-            title="📖 Spells & Abilities",
-            description=(
-                "Select a class to view its "
-                "spells and abilities."
+        self.min_level = 1
+        self.max_level = 60
+        self.range_name = "All Levels"
+
+        # ----------------------------------------------------
+        # Class dropdown
+        # ----------------------------------------------------
+
+        self.add_item(
+            SpellsClassSelect()
+        )
+
+        # ----------------------------------------------------
+        # Level range dropdown
+        # ----------------------------------------------------
+
+        self.add_item(
+            SpellsLevelSelect()
+        )
+
+        # ----------------------------------------------------
+        # View button
+        # ----------------------------------------------------
+
+        view_button = Button(
+            label="View",
+            style=discord.ButtonStyle.success
+        )
+
+        async def view_callback(
+            interaction: Interaction
+        ):
+
+            if not self.selected_class:
+
+                await interaction.response.send_message(
+                    "Please select a class first.",
+                    ephemeral=True
+                )
+
+                return
+
+            await interaction.response.defer()
+
+            spells = await get_class_spells(
+                self.selected_class,
+                self.min_level,
+                self.max_level
             )
+
+            embed = create_spells_embed(
+                self.selected_class,
+                spells,
+                self.range_name,
+                0
+            )
+
+            await interaction.edit_original_response(
+                content=None,
+                embed=embed,
+                view=SpellsResultsView(
+                    self.selected_class,
+                    spells,
+                    self.range_name,
+                    0,
+                    public=True
+                )
+            )
+
+        view_button.callback = view_callback
+
+        self.add_item(
+            view_button
+        )
+
+        # ----------------------------------------------------
+        # Send Privately button
+        # ----------------------------------------------------
+
+        private_button = Button(
+            label="Send Privately",
+            style=discord.ButtonStyle.primary
+        )
+
+        async def private_callback(
+            interaction: Interaction
+        ):
+
+            if not self.selected_class:
+
+                await interaction.response.send_message(
+                    "Please select a class first.",
+                    ephemeral=True
+                )
+
+                return
+
+            await interaction.response.defer(
+                ephemeral=True
+            )
+
+            spells = await get_class_spells(
+                self.selected_class,
+                self.min_level,
+                self.max_level
+            )
+
+            embed = create_spells_embed(
+                self.selected_class,
+                spells,
+                self.range_name,
+                0
+            )
+
+            await interaction.followup.send(
+                embed=embed,
+                view=SpellsResultsView(
+                    self.selected_class,
+                    spells,
+                    self.range_name,
+                    0,
+                    public=False
+                ),
+                ephemeral=True
+            )
+
+        private_button.callback = private_callback
+
+        self.add_item(
+            private_button
+        )
+
+    def get_content(self):
+
+        class_text = (
+            SPELL_CLASS_NAMES.get(
+                self.selected_class,
+                "None Selected"
+            )
+        )
+
+        return (
+            "📖 **Spells & Abilities**\n\n"
+            f"**Class:** {class_text}\n"
+            f"**Level Range:** {self.range_name}\n\n"
+            "Select a class and level range, then "
+            "choose **View** for a public result or "
+            "**Send Privately** for a private result."
+        )
+
+
+# ============================================================
+# SPELL RESULTS EMBED
+# ============================================================
+
+def create_spells_embed(
+    class_code,
+    spells,
+    range_name,
+    page=0
+):
+
+    class_name = SPELL_CLASS_NAMES.get(
+        class_code,
+        class_code
+    )
+
+    per_page = 10
+
+    total_pages = max(
+        1,
+        math.ceil(
+            len(spells) / per_page
+        )
+    )
+
+    if page >= total_pages:
+        page = total_pages - 1
+
+    start = page * per_page
+    end = start + per_page
+
+    page_spells = spells[
+        start:end
+    ]
+
+    embed = discord.Embed(
+        title=(
+            f"📖 {class_name} "
+            f"Spells & Abilities"
+        ),
+        description=f"**{range_name}**"
+    )
+
+    if not page_spells:
+
+        embed.add_field(
+            name="No Spells Found",
+            value=(
+                "No spells or abilities were "
+                "found for this level range."
+            ),
+            inline=False
         )
 
         return embed
 
-    async def interaction_check(
+    for spell in page_spells:
+
+        spell_name = spell["spell_name"]
+        level = spell["level"]
+
+        description = (
+            spell["description"]
+            or "No description available."
+        )
+
+        spell_class = (
+            spell["spell_class"]
+            or "—"
+        )
+
+        location = (
+            spell["location"]
+            or "—"
+        )
+
+        mana = (
+            spell["mana"]
+            or "—"
+        )
+
+        # ----------------------------------------------------
+        # Larger Level + Spell Name
+        # ----------------------------------------------------
+
+        entry = (
+            f"## Level {level} — {spell_name}\n"
+        )
+
+        # ----------------------------------------------------
+        # Description
+        # ----------------------------------------------------
+
+        entry += (
+            f"{description}\n\n"
+        )
+
+        # ----------------------------------------------------
+        # Class / Location / Mana underneath description
+        # ----------------------------------------------------
+
+        entry += (
+            f"**Class:** {spell_class}  •  "
+            f"**Location:** {location}  •  "
+            f"**Mana:** {mana}"
+        )
+
+        embed.add_field(
+            name="\u200b",
+            value=entry,
+            inline=False
+        )
+
+    embed.set_footer(
+        text=(
+            f"Page {page + 1}/{total_pages} • "
+            f"{len(spells)} total abilities"
+        )
+    )
+
+    return embed
+
+
+# ============================================================
+# SPELL RESULTS VIEW
+# ============================================================
+
+class SpellsResultsView(View):
+
+    def __init__(
+        self,
+        class_code,
+        spells,
+        range_name,
+        page=0,
+        public=True
+    ):
+
+        super().__init__(
+            timeout=300
+        )
+
+        self.class_code = class_code
+        self.spells = spells
+        self.range_name = range_name
+        self.page = page
+        self.public = public
+
+        per_page = 10
+
+        total_pages = max(
+            1,
+            math.ceil(
+                len(spells) / per_page
+            )
+        )
+
+        # ----------------------------------------------------
+        # PREVIOUS
+        # ----------------------------------------------------
+
+        previous_button = Button(
+            label="Previous",
+            style=discord.ButtonStyle.secondary,
+            disabled=(page <= 0)
+        )
+
+        async def previous_callback(
+            interaction: Interaction
+        ):
+
+            self.page -= 1
+
+            embed = create_spells_embed(
+                self.class_code,
+                self.spells,
+                self.range_name,
+                self.page
+            )
+
+            await interaction.response.edit_message(
+                content=None,
+                embed=embed,
+                view=SpellsResultsView(
+                    self.class_code,
+                    self.spells,
+                    self.range_name,
+                    self.page,
+                    self.public
+                )
+            )
+
+        previous_button.callback = (
+            previous_callback
+        )
+
+        self.add_item(
+            previous_button
+        )
+
+        # ----------------------------------------------------
+        # NEXT
+        # ----------------------------------------------------
+
+        next_button = Button(
+            label="Next",
+            style=discord.ButtonStyle.secondary,
+            disabled=(
+                page >= total_pages - 1
+            )
+        )
+
+        async def next_callback(
+            interaction: Interaction
+        ):
+
+            self.page += 1
+
+            embed = create_spells_embed(
+                self.class_code,
+                self.spells,
+                self.range_name,
+                self.page
+            )
+
+            await interaction.response.edit_message(
+                content=None,
+                embed=embed,
+                view=SpellsResultsView(
+                    self.class_code,
+                    self.spells,
+                    self.range_name,
+                    self.page,
+                    self.public
+                )
+            )
+
+        next_button.callback = (
+            next_callback
+        )
+
+        self.add_item(
+            next_button
+        )
+
+        # ----------------------------------------------------
+        # CHANGE LEVEL RANGE
+        # ----------------------------------------------------
+
+        change_level_button = Button(
+            label="Change Level Range",
+            style=discord.ButtonStyle.primary
+        )
+
+        async def change_level_callback(
+            interaction: Interaction
+        ):
+
+            # If this is a PUBLIC results message,
+            # return to the normal non-embedded UI.
+            if self.public:
+
+                selection_view = (
+                    SpellsSelectionView(
+                        self.class_code
+                    )
+                )
+
+                await interaction.response.edit_message(
+                    content=selection_view.get_content(),
+                    embed=None,
+                    view=selection_view
+                )
+
+            # If this is a PRIVATE result,
+            # keep the message embedded.
+            else:
+
+                class_name = SPELL_CLASS_NAMES.get(
+                    self.class_code,
+                    self.class_code
+                )
+
+                embed = discord.Embed(
+                    title=(
+                        f"📖 {class_name} "
+                        f"Spells & Abilities"
+                    ),
+                    description=(
+                        "Select a level range to "
+                        "view spells and abilities."
+                    )
+                )
+
+                await interaction.response.edit_message(
+                    content=None,
+                    embed=embed,
+                    view=SpellsPrivateLevelView(
+                        self.class_code
+                    )
+                )
+
+        change_level_button.callback = (
+            change_level_callback
+        )
+
+        self.add_item(
+            change_level_button
+        )
+
+        # ----------------------------------------------------
+        # CHANGE CLASSES
+        # ----------------------------------------------------
+
+        change_class_button = Button(
+            label="Change Classes",
+            style=discord.ButtonStyle.primary
+        )
+
+        async def change_class_callback(
+            interaction: Interaction
+        ):
+
+            # PUBLIC:
+            # Return to normal non-embedded selection.
+            if self.public:
+
+                selection_view = (
+                    SpellsSelectionView()
+                )
+
+                await interaction.response.edit_message(
+                    content=selection_view.get_content(),
+                    embed=None,
+                    view=selection_view
+                )
+
+            # PRIVATE:
+            # Keep everything embedded.
+            else:
+
+                embed = discord.Embed(
+                    title="📖 Spells & Abilities",
+                    description=(
+                        "Select a class to view "
+                        "its spells and abilities."
+                    )
+                )
+
+                await interaction.response.edit_message(
+                    content=None,
+                    embed=embed,
+                    view=SpellsPrivateClassView()
+                )
+
+        change_class_button.callback = (
+            change_class_callback
+        )
+
+        self.add_item(
+            change_class_button
+        )
+
+
+# ============================================================
+# PRIVATE CLASS SELECTION
+# ============================================================
+
+class SpellsPrivateClassSelect(Select):
+
+    def __init__(self):
+
+        options = []
+
+        for code, name in SPELL_CLASS_NAMES.items():
+
+            options.append(
+                SelectOption(
+                    label=name,
+                    value=code
+                )
+            )
+
+        super().__init__(
+            placeholder="Select a class...",
+            min_values=1,
+            max_values=1,
+            options=options
+        )
+
+    async def callback(
         self,
         interaction: Interaction
     ):
 
-        return True
+        class_code = self.values[0]
+
+        embed = discord.Embed(
+            title=(
+                f"📖 "
+                f"{SPELL_CLASS_NAMES[class_code]} "
+                f"Spells & Abilities"
+            ),
+            description=(
+                "Select a level range."
+            )
+        )
+
+        await interaction.response.edit_message(
+            content=None,
+            embed=embed,
+            view=SpellsPrivateLevelView(
+                class_code
+            )
+        )
 
 
-# Add the select after the class is defined.
-# This keeps the class selector identical to the
-# previous interface.
-
-SpellsClassView.add_item = lambda self, item: View.add_item(
-    self,
-    item
-)
-
-
-# Rebuild class view with selector.
-class SpellsClassView(View):
+class SpellsPrivateClassView(View):
 
     def __init__(self):
 
@@ -4835,30 +5436,15 @@ class SpellsClassView(View):
         )
 
         self.add_item(
-            SpellsClassSelect()
+            SpellsPrivateClassSelect()
         )
-
-    def create_embed(
-        self,
-        selected_class=None
-    ):
-
-        embed = discord.Embed(
-            title="📖 Spells & Abilities",
-            description=(
-                "Select a class to view its "
-                "spells and abilities."
-            )
-        )
-
-        return embed
 
 
 # ============================================================
-# LEVEL SELECT
+# PRIVATE LEVEL SELECTION
 # ============================================================
 
-class SpellsLevelSelect(Select):
+class SpellsPrivateLevelSelect(Select):
 
     def __init__(
         self,
@@ -4918,10 +5504,12 @@ class SpellsLevelSelect(Select):
             max_level = int(parts[1])
 
             range_name = (
-                f"Levels {min_level}–{max_level}"
+                f"Levels {parts[0]}–{parts[1]}"
             )
 
-        await interaction.response.defer()
+        await interaction.response.defer(
+            ephemeral=True
+        )
 
         spells = await get_class_spells(
             self.class_code,
@@ -4929,34 +5517,27 @@ class SpellsLevelSelect(Select):
             max_level
         )
 
-        class_name = SPELL_CLASS_NAMES.get(
+        embed = create_spells_embed(
             self.class_code,
-            self.class_code
-        )
-
-        embed = discord.Embed(
-            title="📖 Level Range Selected",
-            description=(
-                f"**{class_name}**\n\n"
-                f"**{range_name}**\n\n"
-                f"{len(spells)} spells/abilities found.\n\n"
-                "Choose how you would like "
-                "to view the results."
-            )
+            spells,
+            range_name,
+            0
         )
 
         await interaction.edit_original_response(
             content=None,
             embed=embed,
-            view=SpellsActionView(
+            view=SpellsResultsView(
                 self.class_code,
                 spells,
-                range_name
+                range_name,
+                0,
+                public=False
             )
         )
 
 
-class SpellsLevelView(View):
+class SpellsPrivateLevelView(View):
 
     def __init__(
         self,
@@ -4967,592 +5548,15 @@ class SpellsLevelView(View):
             timeout=300
         )
 
-        self.selected_class = class_code
-
         self.add_item(
-            SpellsLevelSelect(
+            SpellsPrivateLevelSelect(
                 class_code
             )
         )
 
-    def create_embed(self):
-
-        class_name = SPELL_CLASS_NAMES.get(
-            self.selected_class,
-            self.selected_class
-        )
-
-        embed = discord.Embed(
-            title=(
-                f"📖 {class_name} "
-                f"Spells & Abilities"
-            ),
-            description=(
-                "Select a level range to view "
-                "spells and abilities."
-            )
-        )
-
-        return embed
-
 
 # ============================================================
-# GET SPELLS FROM DATABASE
-# ============================================================
-
-async def get_class_spells(
-    class_code: str,
-    min_level: int = 1,
-    max_level: int = 60
-):
-
-    await ensure_spells_table()
-
-    async with db_pool.acquire() as conn:
-
-        rows = await conn.fetch(
-            """
-            SELECT
-                id,
-                class_code,
-                class_name,
-                spell_name,
-                level,
-                description,
-                spell_class,
-                location,
-                mana,
-                wiki_url
-            FROM class_spells
-            WHERE class_code = $1
-              AND level >= $2
-              AND level <= $3
-            ORDER BY
-                level ASC,
-                spell_name ASC
-            """,
-            class_code,
-            min_level,
-            max_level
-        )
-
-    return rows
-
-
-# ============================================================
-# SPELL RESULTS EMBED
-# ============================================================
-
-def create_spells_embed(
-    class_code,
-    spells,
-    range_name,
-    page=0
-):
-
-    class_name = SPELL_CLASS_NAMES.get(
-        class_code,
-        class_code
-    )
-
-    # --------------------------------------------------------
-    # Number of spells per page
-    # --------------------------------------------------------
-
-    per_page = 10
-
-    total_pages = max(
-        1,
-        math.ceil(
-            len(spells) / per_page
-        )
-    )
-
-    if page >= total_pages:
-        page = total_pages - 1
-
-    start = page * per_page
-    end = start + per_page
-
-    page_spells = spells[
-        start:end
-    ]
-
-    # --------------------------------------------------------
-    # Embed
-    # --------------------------------------------------------
-
-    embed = discord.Embed(
-        title=(
-            f"📖 {class_name} "
-            f"Spells & Abilities"
-        ),
-        description=(
-            f"**{range_name}**"
-        )
-    )
-
-    if not page_spells:
-
-        embed.add_field(
-            name="No Spells Found",
-            value=(
-                "No spells or abilities were "
-                "found for this level range."
-            ),
-            inline=False
-        )
-
-        return embed
-
-    # --------------------------------------------------------
-    # Individual spell entries
-    # --------------------------------------------------------
-
-    for spell in page_spells:
-
-        spell_name = spell["spell_name"]
-        level = spell["level"]
-
-        description = (
-            spell["description"]
-            or "No description available."
-        )
-
-        spell_class = (
-            spell["spell_class"]
-            or "—"
-        )
-
-        location = (
-            spell["location"]
-            or "—"
-        )
-
-        mana = (
-            spell["mana"]
-            or "—"
-        )
-
-        # ----------------------------------------------------
-        # Level + Spell Name
-        #
-        # ### creates larger text.
-        # ----------------------------------------------------
-
-        entry = (
-            f"### Level {level} — {spell_name}\n"
-        )
-
-        # ----------------------------------------------------
-        # Description
-        # ----------------------------------------------------
-
-        entry += (
-            f"{description}\n\n"
-        )
-
-        # ----------------------------------------------------
-        # Class / Location / Mana
-        # ----------------------------------------------------
-
-        entry += (
-            f"**Class:** {spell_class}  •  "
-            f"**Location:** {location}  •  "
-            f"**Mana:** {mana}"
-        )
-
-        embed.add_field(
-            name="\u200b",
-            value=entry,
-            inline=False
-        )
-
-    # --------------------------------------------------------
-    # Footer
-    # --------------------------------------------------------
-
-    embed.set_footer(
-        text=(
-            f"Page {page + 1}/{total_pages} • "
-            f"{len(spells)} total abilities"
-        )
-    )
-
-    return embed
-
-
-# ============================================================
-# SPELL ACTION BUTTONS
-# ============================================================
-
-class SpellsActionView(View):
-
-    def __init__(
-        self,
-        class_code,
-        spells,
-        range_name
-    ):
-
-        super().__init__(
-            timeout=300
-        )
-
-        self.class_code = class_code
-        self.spells = spells
-        self.range_name = range_name
-
-        # ----------------------------------------------------
-        # VIEW - PUBLIC
-        # ----------------------------------------------------
-
-        view_button = Button(
-            label="View",
-            style=discord.ButtonStyle.success
-        )
-
-        async def view_callback(
-            interaction: Interaction
-        ):
-
-            embed = create_spells_embed(
-                self.class_code,
-                self.spells,
-                self.range_name,
-                0
-            )
-
-            await interaction.response.send_message(
-                embed=embed,
-                view=SpellsResultsView(
-                    self.class_code,
-                    self.spells,
-                    self.range_name,
-                    0
-                ),
-                ephemeral=False
-            )
-
-        view_button.callback = view_callback
-
-        self.add_item(
-            view_button
-        )
-
-        # ----------------------------------------------------
-        # SEND PRIVATELY
-        # ----------------------------------------------------
-
-        private_button = Button(
-            label="Send Privately",
-            style=discord.ButtonStyle.primary
-        )
-
-        async def private_callback(
-            interaction: Interaction
-        ):
-
-            embed = create_spells_embed(
-                self.class_code,
-                self.spells,
-                self.range_name,
-                0
-            )
-
-            await interaction.response.send_message(
-                embed=embed,
-                view=SpellsResultsView(
-                    self.class_code,
-                    self.spells,
-                    self.range_name,
-                    0
-                ),
-                ephemeral=True
-            )
-
-        private_button.callback = private_callback
-
-        self.add_item(
-            private_button
-        )
-
-        # ----------------------------------------------------
-        # CHANGE LEVEL RANGE
-        # ----------------------------------------------------
-
-        change_level_button = Button(
-            label="Change Level Range",
-            style=discord.ButtonStyle.secondary
-        )
-
-        async def change_level_callback(
-            interaction: Interaction
-        ):
-
-            class_name = SPELL_CLASS_NAMES.get(
-                self.class_code,
-                self.class_code
-            )
-
-            embed = discord.Embed(
-                title=(
-                    f"📖 {class_name} "
-                    f"Spells & Abilities"
-                ),
-                description=(
-                    "Select a level range to view "
-                    "spells and abilities."
-                )
-            )
-
-            await interaction.response.edit_message(
-                embed=embed,
-                view=SpellsLevelView(
-                    self.class_code
-                )
-            )
-
-        change_level_button.callback = (
-            change_level_callback
-        )
-
-        self.add_item(
-            change_level_button
-        )
-
-        # ----------------------------------------------------
-        # CHANGE CLASS
-        # ----------------------------------------------------
-
-        change_class_button = Button(
-            label="Change Classes",
-            style=discord.ButtonStyle.secondary
-        )
-
-        async def change_class_callback(
-            interaction: Interaction
-        ):
-
-            embed = discord.Embed(
-                title="📖 Spells & Abilities",
-                description=(
-                    "Select a class to view its "
-                    "spells and abilities."
-                )
-            )
-
-            await interaction.response.edit_message(
-                embed=embed,
-                view=SpellsClassView()
-            )
-
-        change_class_button.callback = (
-            change_class_callback
-        )
-
-        self.add_item(
-            change_class_button
-        )
-
-
-# ============================================================
-# SPELL RESULTS PAGINATION
-# ============================================================
-
-class SpellsResultsView(View):
-
-    def __init__(
-        self,
-        class_code,
-        spells,
-        range_name,
-        page=0
-    ):
-
-        super().__init__(
-            timeout=300
-        )
-
-        self.class_code = class_code
-        self.spells = spells
-        self.range_name = range_name
-        self.page = page
-
-        per_page = 10
-
-        total_pages = max(
-            1,
-            math.ceil(
-                len(spells) / per_page
-            )
-        )
-
-        # ----------------------------------------------------
-        # PREVIOUS
-        # ----------------------------------------------------
-
-        previous_button = Button(
-            label="Previous",
-            style=discord.ButtonStyle.secondary,
-            disabled=(page <= 0)
-        )
-
-        async def previous_callback(
-            interaction: Interaction
-        ):
-
-            self.page -= 1
-
-            embed = create_spells_embed(
-                self.class_code,
-                self.spells,
-                self.range_name,
-                self.page
-            )
-
-            await interaction.response.edit_message(
-                embed=embed,
-                view=SpellsResultsView(
-                    self.class_code,
-                    self.spells,
-                    self.range_name,
-                    self.page
-                )
-            )
-
-        previous_button.callback = (
-            previous_callback
-        )
-
-        self.add_item(
-            previous_button
-        )
-
-        # ----------------------------------------------------
-        # NEXT
-        # ----------------------------------------------------
-
-        next_button = Button(
-            label="Next",
-            style=discord.ButtonStyle.secondary,
-            disabled=(
-                page >= total_pages - 1
-            )
-        )
-
-        async def next_callback(
-            interaction: Interaction
-        ):
-
-            self.page += 1
-
-            embed = create_spells_embed(
-                self.class_code,
-                self.spells,
-                self.range_name,
-                self.page
-            )
-
-            await interaction.response.edit_message(
-                embed=embed,
-                view=SpellsResultsView(
-                    self.class_code,
-                    self.spells,
-                    self.range_name,
-                    self.page
-                )
-            )
-
-        next_button.callback = (
-            next_callback
-        )
-
-        self.add_item(
-            next_button
-        )
-
-        # ----------------------------------------------------
-        # CHANGE LEVEL RANGE
-        # ----------------------------------------------------
-
-        change_level_button = Button(
-            label="Change Level Range",
-            style=discord.ButtonStyle.primary
-        )
-
-        async def change_level_callback(
-            interaction: Interaction
-        ):
-
-            class_name = SPELL_CLASS_NAMES.get(
-                self.class_code,
-                self.class_code
-            )
-
-            embed = discord.Embed(
-                title=(
-                    f"📖 {class_name} "
-                    f"Spells & Abilities"
-                ),
-                description=(
-                    "Select a level range to view "
-                    "spells and abilities."
-                )
-            )
-
-            await interaction.response.edit_message(
-                embed=embed,
-                view=SpellsLevelView(
-                    self.class_code
-                )
-            )
-
-        change_level_button.callback = (
-            change_level_callback
-        )
-
-        self.add_item(
-            change_level_button
-        )
-
-        # ----------------------------------------------------
-        # CHANGE CLASS
-        # ----------------------------------------------------
-
-        change_class_button = Button(
-            label="Change Classes",
-            style=discord.ButtonStyle.primary
-        )
-
-        async def change_class_callback(
-            interaction: Interaction
-        ):
-
-            embed = discord.Embed(
-                title="📖 Spells & Abilities",
-                description=(
-                    "Select a class to view its "
-                    "spells and abilities."
-                )
-            )
-
-            await interaction.response.edit_message(
-                embed=embed,
-                view=SpellsClassView()
-            )
-
-        change_class_button.callback = (
-            change_class_callback
-        )
-
-        self.add_item(
-            change_class_button
-        )
-
-
-# ============================================================
-# /SPELLS
+# /SPELLS COMMAND
 # ============================================================
 
 @bot.tree.command(
@@ -5565,17 +5569,16 @@ async def spells_command(
 
     await ensure_spells_table()
 
-    embed = discord.Embed(
-        title="📖 Spells & Abilities",
-        description=(
-            "Select a class to view its "
-            "spells and abilities."
-        )
-    )
+    # --------------------------------------------------------
+    # IMPORTANT:
+    # Initial /spells is NOT an embed.
+    # --------------------------------------------------------
+
+    view = SpellsSelectionView()
 
     await interaction.response.send_message(
-        embed=embed,
-        view=SpellsClassView(),
+        content=view.get_content(),
+        view=view,
         ephemeral=True
     )
 
