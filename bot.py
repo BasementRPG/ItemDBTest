@@ -5136,7 +5136,7 @@ class SpellsSelectionView(View):
             # ------------------------------------------------
 
             await interaction.followup.send(
-                embed=embed,
+                content=embed,
                 view=SpellsResultsView(
                     self.selected_class,
                     spells,
