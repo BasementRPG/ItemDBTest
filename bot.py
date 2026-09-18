@@ -5287,8 +5287,13 @@ def create_spells_embed(
         # SPELL ENTRY
         # ----------------------------------------------------
 
+        if spell["wiki_url"]:
+            spell_title = f"**[{spell_name}]({spell['wiki_url']})**"
+        else:
+            spell_title = f"**{spell_name}**"
+        
         entry += (
-            f"**{spell_name}**\n"
+            f"{spell_title}\n\n"
             f"**Description:** {description}\n"
             f"**Class:** {spell_class}  |  "
             f"**Location:** {location}  |  "
