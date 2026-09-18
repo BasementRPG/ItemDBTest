@@ -4002,35 +4002,101 @@ def clean_spell_text(value):
 # Get HTML from Wiki
 # ------------------------------------------------------------
 
-async def fetch_spell_wiki_html(class_name):
+async def fetch_spell_wiki_html(url: str) -> Optional[str]:
+    """
+    Fetch wiki HTML using a real browser first.
+    Miraheze may reject normal HTTP requests, so Playwright is the
+    primary method here.
+    """
 
-    wiki_url = (
-        "https://monstersandmemories.miraheze.org/wiki/"
-        + class_name.replace(" ", "_")
-    )
+    print(f"[SPELLS] Opening wiki page: {url}")
 
-    headers = {
-        "User-Agent": (
-            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-            "AppleWebKit/537.36 "
-            "(KHTML, like Gecko) "
-            "Chrome/153.0.0.0 Safari/537.36"
-        ),
-        "Accept": (
-            "text/html,application/xhtml+xml,"
-            "application/xml;q=0.9,image/avif,image/webp,"
-            "*/*;q=0.8"
-        ),
-        "Accept-Language": "en-US,en;q=0.9"
-    }
-
-    # --------------------------------------------------------
-    # First try aiohttp
-    # --------------------------------------------------------
-
+    # ---------------------------------------------------------
+    # METHOD 1: Playwright / Chromium
+    # ---------------------------------------------------------
     try:
+        async with async_playwright() as p:
+            browser = await p.chromium.launch(
+                headless=True,
+                args=[
+                    "--no-sandbox",
+                    "--disable-setuid-sandbox",
+                    "--disable-dev-shm-usage",
+                ],
+            )
 
-        timeout = aiohttp.ClientTimeout(total=45)
+            page = await browser.new_page(
+                user_agent=(
+                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                    "AppleWebKit/537.36 (KHTML, like Gecko) "
+                    "Chrome/138.0.0.0 Safari/537.36"
+                )
+            )
+
+            print(f"[SPELLS] Navigating to {url}")
+
+            response = await page.goto(
+                url,
+                wait_until="domcontentloaded",
+                timeout=60000
+            )
+
+            if response:
+                print(
+                    f"[SPELLS] Playwright HTTP status: "
+                    f"{response.status}"
+                )
+            else:
+                print("[SPELLS] Playwright returned no response object")
+
+            # Give the wiki time to finish loading.
+            await page.wait_for_timeout(3000)
+
+            html = await page.content()
+
+            print(
+                f"[SPELLS] Playwright HTML received: "
+                f"{len(html) if html else 0} bytes"
+            )
+
+            # Debug information if the page is actually an error page.
+            title = await page.title()
+            print(f"[SPELLS] Page title: {title}")
+
+            if html and len(html) > 1000:
+                await browser.close()
+                return html
+
+            await browser.close()
+
+    except Exception as e:
+        print(f"[SPELLS] Playwright fetch failed: {type(e).__name__}: {e}")
+
+        import traceback
+        traceback.print_exc()
+
+    # ---------------------------------------------------------
+    # METHOD 2: aiohttp fallback
+    # ---------------------------------------------------------
+    try:
+        print("[SPELLS] Trying aiohttp fallback...")
+
+        headers = {
+            "User-Agent": (
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                "AppleWebKit/537.36 (KHTML, like Gecko) "
+                "Chrome/138.0.0.0 Safari/537.36"
+            ),
+            "Accept": (
+                "text/html,application/xhtml+xml,"
+                "application/xml;q=0.9,image/avif,image/webp,"
+                "*/*;q=0.8"
+            ),
+            "Accept-Language": "en-US,en;q=0.9",
+            "Referer": "https://monstersandmemories.miraheze.org/",
+        }
+
+        timeout = aiohttp.ClientTimeout(total=60)
 
         async with aiohttp.ClientSession(
             headers=headers,
@@ -4038,509 +4104,322 @@ async def fetch_spell_wiki_html(class_name):
         ) as session:
 
             async with session.get(
-                wiki_url,
-                ssl=False,
+                url,
                 allow_redirects=True
             ) as response:
 
-                html = await response.text()
-
                 print(
-                    f"🌐 Spell Wiki request: "
-                    f"{class_name} | HTTP {response.status} | "
-                    f"{len(html):,} bytes"
+                    f"[SPELLS] aiohttp HTTP status: "
+                    f"{response.status}"
                 )
 
-                if response.status == 200 and len(html) > 10000:
-
-                    # Make sure we actually received the Wiki page.
-                    if "mw-content-text" in html:
-
-                        return html
+                html = await response.text(errors="ignore")
 
                 print(
-                    f"⚠️ aiohttp response did not look like a valid "
-                    f"{class_name} Wiki page."
+                    f"[SPELLS] aiohttp HTML received: "
+                    f"{len(html) if html else 0} bytes"
                 )
 
-    except Exception as e:
-
-        print(
-            f"⚠️ aiohttp spell Wiki request failed for "
-            f"{class_name}: {e}"
-        )
-
-
-    # --------------------------------------------------------
-    # Playwright fallback
-    # --------------------------------------------------------
-
-    try:
-
-        print(
-            f"🌐 Trying Playwright for {class_name}..."
-        )
-
-        async with async_playwright() as p:
-
-            browser = await p.chromium.launch(
-                headless=True
-            )
-
-            page = await browser.new_page(
-                user_agent=headers["User-Agent"]
-            )
-
-            await page.goto(
-                wiki_url,
-                wait_until="domcontentloaded",
-                timeout=60000
-            )
-
-            await page.wait_for_timeout(2000)
-
-            html = await page.content()
-
-            print(
-                f"🌐 Playwright received "
-                f"{len(html):,} bytes for {class_name}"
-            )
-
-            await browser.close()
-
-            if html and "mw-content-text" in html:
-
-                return html
+                if html and len(html) > 1000:
+                    return html
 
     except Exception as e:
+        print(f"[SPELLS] aiohttp fetch failed: {type(e).__name__}: {e}")
 
-        print(
-            f"⚠️ Playwright spell Wiki request failed "
-            f"for {class_name}: {e}"
-        )
-
+    print(f"[SPELLS] NO HTML RECEIVED FOR: {url}")
 
     return None
 
 
-# ------------------------------------------------------------
-# Scrape ONE class
-# ------------------------------------------------------------
+async def scrape_class_spells(class_code: str):
+    """
+    Scrape all abilities/spells from the class's wiki page.
 
-async def scrape_class_spells(class_code):
+    The Monsters & Memories wiki structure is:
 
-    class_code = class_code.upper()
+        Fighter Abilities
+            Level 1
+                table
+            Level 2
+                table
+            Level 3
+                table
+            ...
 
-    if class_code not in SPELL_CLASS_NAMES:
+    Each table contains:
 
-        print(
-            f"❌ Unknown spell class code: {class_code}"
-        )
+        Spell Name
+        Spell Description
+        Class
+        Location
+        Mana
+    """
 
+    class_name = SPELL_CLASS_NAMES.get(class_code)
+
+    if not class_name:
+        print(f"[SPELLS] Unknown class code: {class_code}")
         return []
-
-
-    class_name = SPELL_CLASS_NAMES[class_code]
 
     wiki_url = (
         "https://monstersandmemories.miraheze.org/wiki/"
         + class_name.replace(" ", "_")
     )
 
-
     print("")
     print("=" * 70)
-    print(
-        f"🔮 SCRAPING {class_name.upper()} SPELLS"
-    )
+    print(f"[SPELLS] SCRAPING {class_code} / {class_name}")
+    print(f"[SPELLS] URL: {wiki_url}")
     print("=" * 70)
-    print(
-        f"🌐 {wiki_url}"
-    )
 
-
-    # --------------------------------------------------------
-    # Fetch HTML
-    # --------------------------------------------------------
-
-    html = await fetch_spell_wiki_html(class_name)
+    html = await fetch_spell_wiki_html(wiki_url)
 
     if not html:
-
-        print(
-            f"❌ No HTML received for {class_name}"
-        )
-
+        print(f"[SPELLS] No HTML received for {class_name}")
         return []
 
-
     print(
-        f"📄 HTML received: {len(html):,} bytes"
+        f"[SPELLS] Successfully received "
+        f"{len(html):,} bytes of HTML"
     )
 
-
-    # --------------------------------------------------------
+    # ---------------------------------------------------------
     # Parse HTML
-    # --------------------------------------------------------
+    # ---------------------------------------------------------
 
-    soup = BeautifulSoup(
-        html,
-        "html.parser"
-    )
+    soup = BeautifulSoup(html, "html.parser")
 
-
-    # --------------------------------------------------------
-    # Locate Fighter Abilities / class abilities section
-    # --------------------------------------------------------
+    # ---------------------------------------------------------
+    # Find the "Class Abilities" section.
+    #
+    # Fighter specifically has:
+    #
+    # <h1 id="Fighter_Abilities">
+    #     Fighter Abilities
+    # </h1>
+    # ---------------------------------------------------------
 
     abilities_heading = soup.find(
         "h1",
-        id=f"{class_name.replace(' ', '_')}_Abilities"
+        id=f"{class_name}_Abilities"
     )
 
+    if not abilities_heading:
+        abilities_heading = soup.find(
+            lambda tag:
+                tag.name == "h1"
+                and tag.get_text(
+                    " ",
+                    strip=True
+                ).lower() == f"{class_name.lower()} abilities"
+        )
 
     if not abilities_heading:
+        print(
+            f"[SPELLS] Could not find "
+            f"{class_name} Abilities heading"
+        )
 
-        # Fallback: search by heading text.
-        for h1 in soup.find_all("h1"):
-
-            heading_text = clean_spell_text(
-                h1.get_text(" ", strip=True)
-            ).lower()
-
-            if heading_text == f"{class_name.lower()} abilities":
-
-                abilities_heading = h1
-                break
-
-
-    if not abilities_heading:
+        # Extra diagnostic information.
+        h1s = soup.find_all("h1")
 
         print(
-            f"❌ Could not find "
-            f"'{class_name} Abilities' heading."
+            f"[SPELLS] Found {len(h1s)} H1 headings:"
         )
+
+        for h1 in h1s[:20]:
+            print(
+                "   ",
+                h1.get("id"),
+                repr(h1.get_text(" ", strip=True))
+            )
 
         return []
 
-
     print(
-        f"✅ Found {class_name} Abilities section."
+        f"[SPELLS] Found abilities heading: "
+        f"{abilities_heading.get_text(' ', strip=True)}"
     )
 
-
-    # --------------------------------------------------------
-    # Find all Level headings
+    # ---------------------------------------------------------
+    # Walk forward through the page.
     #
     # IMPORTANT:
+    # We do NOT use find_next("table") globally.
     #
-    # The Wiki structure is:
-    #
-    # <div class="mw-heading mw-heading2">
-    #     <h2 id="Level_1">Level 1</h2>
-    # </div>
-    #
-    # <table>
-    #
-    # So we use the parent DIV and its next sibling table.
-    # --------------------------------------------------------
+    # We only collect Level_X headings that occur after the
+    # abilities heading and stop at the next H1.
+    # ---------------------------------------------------------
 
-    level_headings = []
+    spells = []
+    seen = set()
 
     current = abilities_heading
 
     while True:
+        current = current.find_next()
 
-        current = current.find_next("h2")
-
-        if not current:
+        if current is None:
             break
 
-        level_id = current.get("id", "")
+        # Stop when another major H1 section begins.
+        if current.name == "h1":
+            break
 
-        if not level_id.startswith("Level_"):
-
-            # Once we reach another major section,
-            # stop looking for ability levels.
-            parent = current.parent
-
-            if parent:
-                major_heading = parent.find_previous("h1")
-
-                if major_heading and major_heading != abilities_heading:
-                    break
-
+        # We only care about Level_X H2 headings.
+        if current.name != "h2":
             continue
 
+        heading_id = current.get("id", "")
 
-        match = re.search(
-            r"Level_(\d+)",
-            level_id
+        if not heading_id.startswith("Level_"):
+            continue
+
+        level_match = re.search(
+            r"Level[_ ]+(\d+)",
+            heading_id,
+            re.IGNORECASE
         )
 
-        if not match:
-            continue
-
-
-        level_number = int(match.group(1))
-
-        level_headings.append(
-            (
-                level_number,
-                current
+        if not level_match:
+            level_match = re.search(
+                r"Level\s+(\d+)",
+                current.get_text(" ", strip=True),
+                re.IGNORECASE
             )
-        )
 
+        if not level_match:
+            continue
 
-    # Sort numerically.
-    level_headings.sort(
-        key=lambda x: x[0]
-    )
+        level = int(level_match.group(1))
 
+        print(f"[SPELLS] Found Level {level}")
 
-    print(
-        f"📚 Found {len(level_headings)} level sections:"
-    )
-
-    print(
-        "   "
-        + ", ".join(
-            str(level)
-            for level, _ in level_headings
-        )
-    )
-
-
-    if not level_headings:
-
-        print(
-            f"❌ No level headings found for "
-            f"{class_name}."
-        )
-
-        return []
-
-
-    # --------------------------------------------------------
-    # Extract spells
-    # --------------------------------------------------------
-
-    spells = []
-
-    seen = set()
-
-
-    for level, level_heading in level_headings:
-
-        print(
-            f"🔎 Processing Level {level}..."
-        )
-
-
-        # ----------------------------------------------------
-        # THE IMPORTANT PART
+        # -----------------------------------------------------
+        # Find the table belonging to THIS level.
         #
-        # The h2 is inside:
+        # Based on the actual wiki HTML, the structure is:
         #
         # <div class="mw-heading mw-heading2">
+        #     <h2 id="Level_1">Level 1</h2>
+        # </div>
+        # <table>
         #
-        # and the table is the next sibling of that DIV.
-        # ----------------------------------------------------
-
-        level_wrapper = level_heading.parent
+        # Therefore first look at the heading's parent and
+        # its following siblings.
+        # -----------------------------------------------------
 
         table = None
 
+        parent = current.parent
 
-        if level_wrapper:
+        if parent:
+            sibling = parent.find_next_sibling()
 
-            # Direct next sibling table.
-            table = level_wrapper.find_next_sibling(
-                "table"
-            )
+            while sibling:
+                if getattr(sibling, "name", None) == "table":
+                    table = sibling
+                    break
 
+                # Don't cross into another level heading.
+                if (
+                    getattr(sibling, "name", None) == "div"
+                    and sibling.find("h2")
+                ):
+                    break
 
-        # Fallback if the Wiki inserts another element.
-        if not table:
+                sibling = sibling.find_next_sibling()
 
-            table = level_heading.find_next(
-                "table"
-            )
+        # Fallback: find the next table before another H2.
+        if table is None:
+            node = current
 
+            while True:
+                node = node.find_next()
 
-        if not table:
+                if node is None:
+                    break
 
+                if node.name == "h2":
+                    break
+
+                if node.name == "table":
+                    table = node
+                    break
+
+                if node.name == "h1":
+                    break
+
+        if table is None:
             print(
-                f"   ⚠️ No table found for "
-                f"Level {level}"
+                f"[SPELLS] No table found for Level {level}"
             )
-
             continue
 
+        # -----------------------------------------------------
+        # Read table rows.
+        # -----------------------------------------------------
 
-        rows = table.find_all(
-            "tr"
-        )
-
+        rows = table.find_all("tr")
 
         print(
-            f"   📋 Found {len(rows)} table rows."
+            f"[SPELLS] Level {level}: "
+            f"{len(rows)} table rows"
         )
 
-
-        level_count = 0
-
-
         for row in rows:
-
-            cells = row.find_all(
-                "td",
-                recursive=False
-            )
-
-
-            # ------------------------------------------------
-            # Header row
-            #
-            # The Wiki uses TD instead of TH.
-            # ------------------------------------------------
-
-            if cells:
-
-                first_cell_text = clean_spell_text(
-                    cells[0].get_text(
-                        " ",
-                        strip=True
-                    )
-                ).lower()
-
-                if first_cell_text == "spell name":
-
-                    continue
-
-
-            # Need:
-            #
-            # 0 = Spell Name
-            # 1 = Description
-            # 2 = Class
-            # 3 = Location
-            # 4 = Mana
-            #
+            cells = row.find_all(["td", "th"])
 
             if len(cells) < 5:
-
                 continue
 
-
-            # ------------------------------------------------
-            # Spell name
-            #
-            # Prefer the link text.
-            # ------------------------------------------------
-
-            spell_link = cells[0].find(
-                "a"
-            )
-
-
-            if spell_link:
-
-                spell_name = clean_spell_text(
-                    spell_link.get_text(
-                        " ",
-                        strip=True
-                    )
+            values = [
+                clean_spell_text(
+                    cell.get_text(" ", strip=True)
                 )
+                for cell in cells[:5]
+            ]
 
-            else:
+            spell_name = values[0]
+            description = values[1]
+            spell_class = values[2]
+            location = values[3]
+            mana = values[4]
 
-                spell_name = clean_spell_text(
-                    cells[0].get_text(
-                        " ",
-                        strip=True
-                    )
-                )
-
+            # Skip the header row.
+            if spell_name.lower() == "spell name":
+                continue
 
             if not spell_name:
-
                 continue
 
+            # -------------------------------------------------
+            # Get linked spell name when available.
+            # -------------------------------------------------
 
-            # ------------------------------------------------
-            # Description
-            # ------------------------------------------------
+            link = cells[0].find("a")
 
-            description = clean_spell_text(
-                cells[1].get_text(
-                    " ",
-                    strip=True
+            if link:
+                linked_name = clean_spell_text(
+                    link.get_text(" ", strip=True)
                 )
-            )
 
+                if linked_name:
+                    spell_name = linked_name
 
-            # ------------------------------------------------
-            # Class
-            #
-            # This is usually a link such as:
-            #
-            # Val
-            # Mig
-            # Mar
-            # ------------------------------------------------
-
-            spell_class = clean_spell_text(
-                cells[2].get_text(
-                    " ",
-                    strip=True
-                )
-            )
-
-
-            # ------------------------------------------------
-            # Location
-            # ------------------------------------------------
-
-            location = clean_spell_text(
-                cells[3].get_text(
-                    " ",
-                    strip=True
-                )
-            )
-
-
-            # ------------------------------------------------
-            # Mana
-            # ------------------------------------------------
-
-            mana = clean_spell_text(
-                cells[4].get_text(
-                    " ",
-                    strip=True
-                )
-            )
-
-
-            # ------------------------------------------------
-            # Deduplicate
-            # ------------------------------------------------
+            # -------------------------------------------------
+            # Deduplicate.
+            # -------------------------------------------------
 
             dedupe_key = (
                 level,
-                spell_name.lower()
+                spell_name.strip().lower()
             )
-
 
             if dedupe_key in seen:
-
                 continue
 
-
-            seen.add(
-                dedupe_key
-            )
-
+            seen.add(dedupe_key)
 
             spells.append({
                 "class_code": class_code,
@@ -4551,42 +4430,31 @@ async def scrape_class_spells(class_code):
                 "spell_class": spell_class,
                 "location": location,
                 "mana": mana,
-                "wiki_url": wiki_url
+                "wiki_url": wiki_url,
             })
 
+            print(
+                f"[SPELLS]   Level {level}: "
+                f"{spell_name}"
+            )
 
-            level_count += 1
+    # ---------------------------------------------------------
+    # Final diagnostics.
+    # ---------------------------------------------------------
 
-
-        print(
-            f"   ✅ Level {level}: "
-            f"{level_count} abilities"
+    spells.sort(
+        key=lambda x: (
+            x["level"],
+            x["spell_name"].lower()
         )
-
-
-    # --------------------------------------------------------
-    # Final result
-    # --------------------------------------------------------
+    )
 
     print("")
     print(
-        f"✅ {class_name}: "
-        f"{len(spells)} total abilities found."
+        f"[SPELLS] COMPLETE: "
+        f"{class_name} = {len(spells)} abilities"
     )
     print("")
-
-
-    # Debug preview.
-    for spell in spells[:10]:
-
-        print(
-            f"   L{spell['level']} | "
-            f"{spell['spell_name']} | "
-            f"{spell['spell_class']} | "
-            f"{spell['location']} | "
-            f"{spell['mana']}"
-        )
-
 
     return spells
 
