@@ -5071,8 +5071,8 @@ class SpellsSelectionView(View):
             # --------------------------------------------------------
         
             await interaction.edit_original_response(
-                content=None,
-                embed=embed,
+                content=embed,
+                embed=None,
                 view=SpellsResultsView(
                     self.selected_class,
                     spells,
