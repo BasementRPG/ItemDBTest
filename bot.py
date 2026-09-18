@@ -5227,49 +5227,15 @@ def create_spells_embed(
         class_code
     )
 
-    per_page = 10
-
-    total_pages = max(
-        1,
-        math.ceil(
-            len(spells) / per_page
-        )
-    )
-
-    if page >= total_pages:
-
-        page = total_pages - 1
-
-    start = page * per_page
-    end = start + per_page
-
-    page_spells = spells[
-        start:end
-    ]
-
     # --------------------------------------------------------
-    # HEADER
+    # BUILD INDIVIDUAL SPELL ENTRIES
     # --------------------------------------------------------
 
-    message = (
-        f"📖 **{class_name} — {range_name}**\n\n"
-    )
-
-    if not page_spells:
-
-        message += (
-            "━━━━━━━━━━━━━━━━━━━━\n"
-            "**No Spells Found**\n"
-            "━━━━━━━━━━━━━━━━━━━━\n\n"
-            "No spells or abilities were found "
-            "for this level range."
-        )
-
-        return message
+    entries = []
 
     current_level = None
 
-    for spell in page_spells:
+    for spell in spells:
 
         spell_name = spell[
             "spell_name"
@@ -5307,23 +5273,107 @@ def create_spells_embed(
 
             current_level = level
 
-            message += (
+            entry = (
                 "━━━━━━━━━━━━━━━━━━━━\n"
                 f"**LEVEL {level}**\n"
                 "━━━━━━━━━━━━━━━━━━━━\n\n"
             )
 
+        else:
+
+            entry = ""
+
         # ----------------------------------------------------
-        # SPELL
+        # SPELL ENTRY
         # ----------------------------------------------------
 
-        message += (
-            f"**{spell_name}**\n\n"
-            f"**Description:** {description}\n\n"
+        entry += (
+            f"**{spell_name}**\n"
+            f"**Description:** {description}\n"
             f"**Class:** {spell_class}  |  "
             f"**Location:** {location}  |  "
             f"**Mana:** {mana}\n\n"
         )
+
+        entries.append(entry)
+
+    # --------------------------------------------------------
+    # BUILD PAGES UNDER DISCORD'S 2000 CHARACTER LIMIT
+    # --------------------------------------------------------
+
+    pages = []
+
+    current_page = (
+        f"📖 **{class_name} — {range_name}**\n\n"
+    )
+
+    for entry in entries:
+
+        # Reserve room for the footer.
+        test_footer = (
+            "━━━━━━━━━━━━━━━━━━━━\n"
+            f"*Page {len(pages) + 1}/999 • "
+            f"{len(spells)} total abilities*"
+        )
+
+        if (
+            len(current_page)
+            + len(entry)
+            + len(test_footer)
+            > 1900
+            and current_page.strip()
+            != f"📖 **{class_name} — {range_name}**"
+        ):
+
+            pages.append(
+                current_page
+            )
+
+            current_page = (
+                f"📖 **{class_name} — {range_name}**\n\n"
+                + entry
+            )
+
+        else:
+
+            current_page += entry
+
+    if current_page.strip():
+
+        pages.append(
+            current_page
+        )
+
+    # --------------------------------------------------------
+    # NO RESULTS
+    # --------------------------------------------------------
+
+    if not pages:
+
+        return (
+            f"📖 **{class_name} — {range_name}**\n\n"
+            "━━━━━━━━━━━━━━━━━━━━\n"
+            "**No Spells Found**\n"
+            "━━━━━━━━━━━━━━━━━━━━\n\n"
+            "No spells or abilities were found "
+            "for this level range."
+        )
+
+    # --------------------------------------------------------
+    # PAGE SAFETY
+    # --------------------------------------------------------
+
+    total_pages = len(pages)
+
+    if page >= total_pages:
+
+        page = total_pages - 1
+
+    if page < 0:
+
+        page = 0
+
+    message = pages[page]
 
     # --------------------------------------------------------
     # FOOTER
@@ -5363,13 +5413,93 @@ class SpellsResultsView(View):
         self.page = page
         self.public = public
 
-        per_page = 10
+        # ----------------------------------------------------
+        # CALCULATE RESULT PAGES
+        # ----------------------------------------------------
+
+        pages = []
+
+        header = (
+            f"📖 **{SPELL_CLASS_NAMES.get(class_code, class_code)} — "
+            f"{range_name}**\n\n"
+        )
+
+        current_page_length = len(header)
+
+        current_level = None
+
+        for spell in spells:
+
+            level = spell["level"]
+
+            if level != current_level:
+
+                current_level = level
+
+                entry = (
+                    "━━━━━━━━━━━━━━━━━━━━\n"
+                    f"**LEVEL {level}**\n"
+                    "━━━━━━━━━━━━━━━━━━━━\n\n"
+                )
+
+            else:
+
+                entry = ""
+
+            description = (
+                spell["description"]
+                or "No description available."
+            )
+
+            spell_class = (
+                spell["spell_class"]
+                or "—"
+            )
+
+            location = (
+                spell["location"]
+                or "—"
+            )
+
+            mana = (
+                spell["mana"]
+                or "—"
+            )
+
+            entry += (
+                f"**{spell['spell_name']}**\n\n"
+                f"**Description:** {description}\n\n"
+                f"**Class:** {spell_class}  |  "
+                f"**Location:** {location}  |  "
+                f"**Mana:** {mana}\n\n"
+            )
+
+            if (
+                current_page_length
+                + len(entry)
+                + 100
+                > 1900
+                and current_page_length > len(header)
+            ):
+
+                pages.append(True)
+
+                current_page_length = (
+                    len(header)
+                    + len(entry)
+                )
+
+            else:
+
+                current_page_length += len(entry)
+
+        if current_page_length > len(header):
+
+            pages.append(True)
 
         total_pages = max(
             1,
-            math.ceil(
-                len(spells) / per_page
-            )
+            len(pages)
         )
 
         # ----------------------------------------------------
