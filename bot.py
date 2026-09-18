@@ -5396,8 +5396,8 @@ class SpellsResultsView(View):
             )
 
             await interaction.response.edit_message(
-                content=None,
-                embed=embed,
+                content=embed,
+                embed=None,
                 view=SpellsResultsView(
                     self.class_code,
                     self.spells,
@@ -5441,8 +5441,8 @@ class SpellsResultsView(View):
             )
 
             await interaction.response.edit_message(
-                content=None,
-                embed=embed,
+                content=embed,
+                embed=None,
                 view=SpellsResultsView(
                     self.class_code,
                     self.spells,
@@ -5513,8 +5513,8 @@ class SpellsResultsView(View):
                 )
 
                 await interaction.response.edit_message(
-                    content=None,
-                    embed=embed,
+                    content=embed,
+                    embed=None,
                     view=SpellsPrivateLevelView(
                         self.class_code
                     )
@@ -5571,8 +5571,8 @@ class SpellsResultsView(View):
                 )
 
                 await interaction.response.edit_message(
-                    content=None,
-                    embed=embed,
+                    content=embed,
+                    embed=None,
                     view=SpellsPrivateClassView()
                 )
 
@@ -5630,8 +5630,8 @@ class SpellsPrivateClassSelect(Select):
         )
 
         await interaction.response.edit_message(
-            content=None,
-            embed=embed,
+            content=embed,
+            embed=None,
             view=SpellsPrivateLevelView(
                 class_code
             )
@@ -5743,8 +5743,8 @@ class SpellsPrivateLevelSelect(Select):
         )
 
         await interaction.edit_original_response(
-            content=None,
-            embed=embed,
+            content=embed,
+            embed=None,
             view=SpellsResultsView(
                 self.class_code,
                 spells,
