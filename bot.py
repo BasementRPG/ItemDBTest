@@ -3902,9 +3902,10 @@ async def mapremove(
 # ==================== END MAP SYSTEM ========================
 # ============================================================
 
-# ========================================================
-# CLASS SPELL / ABILITY DATABASE
-# ========================================================
+
+# ============================================================
+# SPELL / ABILITY DATABASE SYSTEM
+# ============================================================
 
 SPELL_CLASS_NAMES = {
     "ARC": "Archer",
@@ -3928,275 +3929,259 @@ SPELL_CLASS_NAMES = {
 }
 
 
-# ========================================================
-# SPELL LEVEL OPTIONS
-# ========================================================
-
-SPELL_LEVEL_OPTIONS = list(range(1, 61))
+SPELL_CLASS_CODES = list(SPELL_CLASS_NAMES.keys())
 
 
-# ========================================================
-# CREATE SPELL TABLE
-# ========================================================
+# ------------------------------------------------------------
+# Database table
+# ------------------------------------------------------------
 
 async def ensure_spells_table():
 
-    global db_pool
-
-    if db_pool is None:
-        db_pool = await asyncpg.create_pool(
-            DATABASE_URL
-        )
-
     async with db_pool.acquire() as conn:
 
-        await conn.execute(
-            """
+        await conn.execute("""
             CREATE TABLE IF NOT EXISTS class_spells (
                 id BIGSERIAL PRIMARY KEY,
 
                 class_code TEXT NOT NULL,
-
                 class_name TEXT NOT NULL,
 
                 spell_name TEXT NOT NULL,
-
                 level INTEGER NOT NULL,
 
-                description TEXT,
+                description TEXT DEFAULT '',
+                spell_class TEXT DEFAULT '',
+                location TEXT DEFAULT '',
+                mana TEXT DEFAULT '',
 
-                spell_class TEXT,
-
-                location TEXT,
-
-                mana TEXT,
-
-                wiki_url TEXT,
+                wiki_url TEXT DEFAULT '',
 
                 created_at TIMESTAMP DEFAULT NOW(),
-
                 updated_at TIMESTAMP DEFAULT NOW()
             )
-            """
-        )
+        """)
 
-        await conn.execute(
-            """
-            CREATE INDEX IF NOT EXISTS
-            idx_class_spells_class_level
-            ON class_spells (
-                class_code,
-                level
-            )
-            """
-        )
+        await conn.execute("""
+            CREATE INDEX IF NOT EXISTS idx_class_spells_class
+            ON class_spells(class_code)
+        """)
+
+        await conn.execute("""
+            CREATE INDEX IF NOT EXISTS idx_class_spells_level
+            ON class_spells(level)
+        """)
+
+        await conn.execute("""
+            CREATE INDEX IF NOT EXISTS idx_class_spells_name
+            ON class_spells(spell_name)
+        """)
 
 
-# ========================================================
-# CLEAN SPELL TEXT
-# ========================================================
+# ------------------------------------------------------------
+# Clean text from Wiki HTML
+# ------------------------------------------------------------
 
-def clean_spell_text(text):
+def clean_spell_text(value):
 
-    if not text:
+    if value is None:
         return ""
 
-    text = text.replace(
-        "\xa0",
-        " "
-    )
+    value = str(value)
 
-    text = re.sub(
-        r"\s+",
-        " ",
-        text
-    )
+    value = value.replace("\xa0", " ")
+    value = value.replace("\r", " ")
+    value = value.replace("\n", " ")
 
-    return text.strip()
+    value = re.sub(r"\s+", " ", value)
+
+    return value.strip()
 
 
-# ========================================================
-# SCRAPE CLASS SPELLS / ABILITIES
-#
-async def scrape_class_spells(class_code):
+# ------------------------------------------------------------
+# Get HTML from Wiki
+# ------------------------------------------------------------
 
-    class_name = SPELL_CLASS_NAMES.get(
-        class_code
-    )
-
-    if not class_name:
-
-        print(
-            f"❌ Unknown spell class code: "
-            f"{class_code}"
-        )
-
-        return []
-
-
-    # ====================================================
-    # WIKI URL
-    # ====================================================
+async def fetch_spell_wiki_html(class_name):
 
     wiki_url = (
         "https://monstersandmemories.miraheze.org/wiki/"
-        + class_name.replace(
-            " ",
-            "_"
-        )
+        + class_name.replace(" ", "_")
     )
 
+    headers = {
+        "User-Agent": (
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+            "AppleWebKit/537.36 "
+            "(KHTML, like Gecko) "
+            "Chrome/153.0.0.0 Safari/537.36"
+        ),
+        "Accept": (
+            "text/html,application/xhtml+xml,"
+            "application/xml;q=0.9,image/avif,image/webp,"
+            "*/*;q=0.8"
+        ),
+        "Accept-Language": "en-US,en;q=0.9"
+    }
 
-    print(
-        f"\n{'=' * 70}"
-    )
-
-    print(
-        f"📚 STARTING SPELL SCRAPE"
-    )
-
-    print(
-        f"CLASS: {class_name}"
-    )
-
-    print(
-        f"URL: {wiki_url}"
-    )
-
-    print(
-        f"{'=' * 70}"
-    )
-
-
-    html = None
-
-
-    # ====================================================
-    # DOWNLOAD WITH AIOHTTP
-    # ====================================================
+    # --------------------------------------------------------
+    # First try aiohttp
+    # --------------------------------------------------------
 
     try:
 
-        headers = {
-            "User-Agent":
-                "Mozilla/5.0 "
-                "(Windows NT 10.0; Win64; x64) "
-                "AppleWebKit/537.36 "
-                "(KHTML, like Gecko) "
-                "Chrome/120.0 Safari/537.36"
-        }
-
+        timeout = aiohttp.ClientTimeout(total=45)
 
         async with aiohttp.ClientSession(
-            headers=headers
+            headers=headers,
+            timeout=timeout
         ) as session:
 
             async with session.get(
                 wiki_url,
-                timeout=30
+                ssl=False,
+                allow_redirects=True
             ) as response:
 
+                html = await response.text()
+
                 print(
-                    f"🌐 HTTP STATUS: "
-                    f"{response.status}"
+                    f"🌐 Spell Wiki request: "
+                    f"{class_name} | HTTP {response.status} | "
+                    f"{len(html):,} bytes"
                 )
 
+                if response.status == 200 and len(html) > 10000:
 
-                if response.status == 200:
+                    # Make sure we actually received the Wiki page.
+                    if "mw-content-text" in html:
 
-                    html = await response.text()
+                        return html
 
-                    print(
-                        f"✅ HTML DOWNLOADED"
-                    )
-
-                    print(
-                        f"HTML SIZE: "
-                        f"{len(html):,} characters"
-                    )
-
-                else:
-
-                    print(
-                        f"❌ Wiki returned "
-                        f"HTTP {response.status}"
-                    )
-
+                print(
+                    f"⚠️ aiohttp response did not look like a valid "
+                    f"{class_name} Wiki page."
+                )
 
     except Exception as e:
 
         print(
-            f"⚠️ aiohttp failed: {e}"
+            f"⚠️ aiohttp spell Wiki request failed for "
+            f"{class_name}: {e}"
         )
 
 
-    # ====================================================
-    # PLAYWRIGHT FALLBACK
-    # ====================================================
+    # --------------------------------------------------------
+    # Playwright fallback
+    # --------------------------------------------------------
 
-    if not html:
-
-        try:
-
-            print(
-                "🌐 Trying Playwright..."
-            )
-
-
-            async with async_playwright() as p:
-
-                browser = await p.chromium.launch(
-                    headless=True
-                )
-
-
-                page = await browser.new_page()
-
-
-                await page.goto(
-                    wiki_url,
-                    wait_until="networkidle",
-                    timeout=60000
-                )
-
-
-                html = await page.content()
-
-
-                await browser.close()
-
-
-                print(
-                    f"✅ Playwright HTML downloaded"
-                )
-
-                print(
-                    f"HTML SIZE: "
-                    f"{len(html):,} characters"
-                )
-
-
-        except Exception as e:
-
-            print(
-                f"❌ Playwright failed: {e}"
-            )
-
-            return []
-
-
-    if not html:
+    try:
 
         print(
-            f"❌ No HTML received."
+            f"🌐 Trying Playwright for {class_name}..."
+        )
+
+        async with async_playwright() as p:
+
+            browser = await p.chromium.launch(
+                headless=True
+            )
+
+            page = await browser.new_page(
+                user_agent=headers["User-Agent"]
+            )
+
+            await page.goto(
+                wiki_url,
+                wait_until="domcontentloaded",
+                timeout=60000
+            )
+
+            await page.wait_for_timeout(2000)
+
+            html = await page.content()
+
+            print(
+                f"🌐 Playwright received "
+                f"{len(html):,} bytes for {class_name}"
+            )
+
+            await browser.close()
+
+            if html and "mw-content-text" in html:
+
+                return html
+
+    except Exception as e:
+
+        print(
+            f"⚠️ Playwright spell Wiki request failed "
+            f"for {class_name}: {e}"
+        )
+
+
+    return None
+
+
+# ------------------------------------------------------------
+# Scrape ONE class
+# ------------------------------------------------------------
+
+async def scrape_class_spells(class_code):
+
+    class_code = class_code.upper()
+
+    if class_code not in SPELL_CLASS_NAMES:
+
+        print(
+            f"❌ Unknown spell class code: {class_code}"
         )
 
         return []
 
 
-    # ====================================================
-    # PARSE HTML
-    # ====================================================
+    class_name = SPELL_CLASS_NAMES[class_code]
+
+    wiki_url = (
+        "https://monstersandmemories.miraheze.org/wiki/"
+        + class_name.replace(" ", "_")
+    )
+
+
+    print("")
+    print("=" * 70)
+    print(
+        f"🔮 SCRAPING {class_name.upper()} SPELLS"
+    )
+    print("=" * 70)
+    print(
+        f"🌐 {wiki_url}"
+    )
+
+
+    # --------------------------------------------------------
+    # Fetch HTML
+    # --------------------------------------------------------
+
+    html = await fetch_spell_wiki_html(class_name)
+
+    if not html:
+
+        print(
+            f"❌ No HTML received for {class_name}"
+        )
+
+        return []
+
+
+    print(
+        f"📄 HTML received: {len(html):,} bytes"
+    )
+
+
+    # --------------------------------------------------------
+    # Parse HTML
+    # --------------------------------------------------------
 
     soup = BeautifulSoup(
         html,
@@ -4204,392 +4189,255 @@ async def scrape_class_spells(class_code):
     )
 
 
-    records = []
+    # --------------------------------------------------------
+    # Locate Fighter Abilities / class abilities section
+    # --------------------------------------------------------
+
+    abilities_heading = soup.find(
+        "h1",
+        id=f"{class_name.replace(' ', '_')}_Abilities"
+    )
 
 
-    # ====================================================
-    # FIND LEVELS 1 THROUGH 60
-    # ====================================================
+    if not abilities_heading:
 
-    for level in range(1, 61):
+        # Fallback: search by heading text.
+        for h1 in soup.find_all("h1"):
 
-        level_id = f"Level_{level}"
+            heading_text = clean_spell_text(
+                h1.get_text(" ", strip=True)
+            ).lower()
 
+            if heading_text == f"{class_name.lower()} abilities":
+
+                abilities_heading = h1
+                break
+
+
+    if not abilities_heading:
 
         print(
-            f"\n----------------------------------------"
+            f"❌ Could not find "
+            f"'{class_name} Abilities' heading."
         )
 
-        print(
-            f"🔎 LOOKING FOR {level_id}"
-        )
+        return []
 
 
-        # =================================================
-        # FIND H2
-        # =================================================
-
-        level_heading = soup.find(
-            "h2",
-            id=level_id
-        )
+    print(
+        f"✅ Found {class_name} Abilities section."
+    )
 
 
-        if level_heading is None:
+    # --------------------------------------------------------
+    # Find all Level headings
+    #
+    # IMPORTANT:
+    #
+    # The Wiki structure is:
+    #
+    # <div class="mw-heading mw-heading2">
+    #     <h2 id="Level_1">Level 1</h2>
+    # </div>
+    #
+    # <table>
+    #
+    # So we use the parent DIV and its next sibling table.
+    # --------------------------------------------------------
 
-            print(
-                f"⚠️ {level_id} NOT FOUND"
-            )
+    level_headings = []
+
+    current = abilities_heading
+
+    while True:
+
+        current = current.find_next("h2")
+
+        if not current:
+            break
+
+        level_id = current.get("id", "")
+
+        if not level_id.startswith("Level_"):
+
+            # Once we reach another major section,
+            # stop looking for ability levels.
+            parent = current.parent
+
+            if parent:
+                major_heading = parent.find_previous("h1")
+
+                if major_heading and major_heading != abilities_heading:
+                    break
 
             continue
 
 
+        match = re.search(
+            r"Level_(\d+)",
+            level_id
+        )
+
+        if not match:
+            continue
+
+
+        level_number = int(match.group(1))
+
+        level_headings.append(
+            (
+                level_number,
+                current
+            )
+        )
+
+
+    # Sort numerically.
+    level_headings.sort(
+        key=lambda x: x[0]
+    )
+
+
+    print(
+        f"📚 Found {len(level_headings)} level sections:"
+    )
+
+    print(
+        "   "
+        + ", ".join(
+            str(level)
+            for level, _ in level_headings
+        )
+    )
+
+
+    if not level_headings:
+
         print(
-            f"✅ FOUND {level_id}"
+            f"❌ No level headings found for "
+            f"{class_name}."
+        )
+
+        return []
+
+
+    # --------------------------------------------------------
+    # Extract spells
+    # --------------------------------------------------------
+
+    spells = []
+
+    seen = set()
+
+
+    for level, level_heading in level_headings:
+
+        print(
+            f"🔎 Processing Level {level}..."
         )
 
 
-        # =================================================
-        # FIND THE NEXT LEVEL H2
+        # ----------------------------------------------------
+        # THE IMPORTANT PART
         #
-        # This gives us the exact boundary of this level.
-        # =================================================
+        # The h2 is inside:
+        #
+        # <div class="mw-heading mw-heading2">
+        #
+        # and the table is the next sibling of that DIV.
+        # ----------------------------------------------------
 
-        next_level_heading = None
+        level_wrapper = level_heading.parent
 
-
-        current_element = (
-            level_heading.find_next(
-                "h2"
-            )
-        )
-
-
-        while current_element:
-
-            current_id = (
-                current_element.get(
-                    "id",
-                    ""
-                )
-            )
+        table = None
 
 
-            if current_id.startswith(
-                "Level_"
-            ):
+        if level_wrapper:
 
-                next_level_heading = (
-                    current_element
-                )
-
-                break
-
-
-            current_element = (
-                current_element.find_next(
-                    "h2"
-                )
-            )
-
-
-        if next_level_heading:
-
-            print(
-                f"   Next level: "
-                f"{next_level_heading.get('id')}"
-            )
-
-        else:
-
-            print(
-                f"   No next level found."
-            )
-
-
-        # =================================================
-        # FIND TABLES AFTER THIS H2
-        # =================================================
-
-        tables_after_level = []
-
-
-        current = level_heading
-
-
-        while True:
-
-            current = current.find_next(
+            # Direct next sibling table.
+            table = level_wrapper.find_next_sibling(
                 "table"
             )
 
 
-            if current is None:
+        # Fallback if the Wiki inserts another element.
+        if not table:
 
-                break
-
-
-            # ---------------------------------------------
-            # Determine whether this table occurs before
-            # the next Level H2.
-            # ---------------------------------------------
-
-            if next_level_heading:
-
-                # Is the next level heading before
-                # this table in the document?
-                next_h2_position = (
-                    next_level_heading.sourceline
-                    if hasattr(
-                        next_level_heading,
-                        "sourceline"
-                    )
-                    else None
-                )
-
-                table_position = (
-                    current.sourceline
-                    if hasattr(
-                        current,
-                        "sourceline"
-                    )
-                    else None
-                )
+            table = level_heading.find_next(
+                "table"
+            )
 
 
-                # -----------------------------------------
-                # BeautifulSoup does not always provide
-                # source line information, so use DOM
-                # relationship instead.
-                # -----------------------------------------
-
-                node = next_level_heading
-
-
-                found_before_next_level = False
-
-
-                for element in node.find_all_previous(
-                    "table"
-                ):
-
-                    if element is current:
-
-                        found_before_next_level = True
-
-                        break
-
-
-                if found_before_next_level:
-
-                    # This table is before the next level
-                    # and belongs to this level.
-
-                    tables_after_level.append(
-                        current
-                    )
-
-                    break
-
-
-                # If this table is after the next level,
-                # stop looking.
-                break
-
-
-            else:
-
-                tables_after_level.append(
-                    current
-                )
-
-                break
-
-
-        # =================================================
-        # FALLBACK TABLE SEARCH
-        #
-        # The DOM method above can be unnecessarily strict.
-        # Since the wiki has one table directly after each
-        # level heading, use the first table encountered
-        # before the next Level H2.
-        # =================================================
-
-        spell_table = None
-
-
-        # -------------------------------------------------
-        # Walk every element between this Level H2 and the
-        # next Level H2.
-        # -------------------------------------------------
-
-        current = level_heading
-
-
-        while True:
-
-            current = current.find_next()
-
-
-            if current is None:
-
-                break
-
-
-            # ---------------------------------------------
-            # Stop at the next Level H2
-            # ---------------------------------------------
-
-            if current.name == "h2":
-
-                current_id = (
-                    current.get(
-                        "id",
-                        ""
-                    )
-                )
-
-
-                if current_id.startswith(
-                    "Level_"
-                ):
-
-                    break
-
-
-            # ---------------------------------------------
-            # First table found belongs to this level
-            # ---------------------------------------------
-
-            if current.name == "table":
-
-                spell_table = current
-
-                break
-
-
-        if spell_table is None:
+        if not table:
 
             print(
-                f"❌ NO TABLE FOUND "
-                f"FOR LEVEL {level}"
+                f"   ⚠️ No table found for "
+                f"Level {level}"
             )
 
             continue
 
 
-        print(
-            f"✅ TABLE FOUND FOR LEVEL {level}"
-        )
-
-
-        # =================================================
-        # GET ALL ROWS
-        # =================================================
-
-        rows = spell_table.find_all(
+        rows = table.find_all(
             "tr"
         )
 
 
         print(
-            f"   Rows found: {len(rows)}"
+            f"   📋 Found {len(rows)} table rows."
         )
 
 
-        if len(rows) <= 1:
-
-            print(
-                f"⚠️ No data rows "
-                f"for Level {level}"
-            )
-
-            continue
+        level_count = 0
 
 
-        # =================================================
-        # PROCESS ROWS
-        # =================================================
-
-        for row_number, row in enumerate(
-            rows
-        ):
+        for row in rows:
 
             cells = row.find_all(
-                "td"
+                "td",
+                recursive=False
             )
 
 
-            if not cells:
-
-                continue
-
-
             # ------------------------------------------------
-            # Extract text from every cell
+            # Header row
+            #
+            # The Wiki uses TD instead of TH.
             # ------------------------------------------------
 
-            values = [
+            if cells:
 
-                clean_spell_text(
-                    cell.get_text(
+                first_cell_text = clean_spell_text(
+                    cells[0].get_text(
                         " ",
                         strip=True
                     )
-                )
+                ).lower()
 
-                for cell in cells
-            ]
-
-
-            # ------------------------------------------------
-            # Skip the header row
-            # ------------------------------------------------
-
-            if values:
-
-                first_cell = (
-                    values[0]
-                    .lower()
-                    .strip()
-                )
-
-
-                if first_cell == "spell name":
-
-                    print(
-                        f"   Skipping header row"
-                    )
+                if first_cell_text == "spell name":
 
                     continue
 
 
-            # =================================================
-            # THE WIKI HAS EXACTLY 5 COLUMNS
+            # Need:
             #
             # 0 = Spell Name
-            # 1 = Spell Description
+            # 1 = Description
             # 2 = Class
             # 3 = Location
             # 4 = Mana
-            # =================================================
+            #
 
             if len(cells) < 5:
-
-                print(
-                    f"⚠️ Level {level}, "
-                    f"row {row_number}: "
-                    f"Only {len(cells)} cells"
-                )
 
                 continue
 
 
-            # =================================================
-            # SPELL NAME
+            # ------------------------------------------------
+            # Spell name
             #
-            # Prefer the actual <a> link.
-            # =================================================
+            # Prefer the link text.
+            # ------------------------------------------------
 
             spell_link = cells[0].find(
                 "a"
@@ -4615,9 +4463,14 @@ async def scrape_class_spells(class_code):
                 )
 
 
-            # =================================================
-            # DESCRIPTION
-            # =================================================
+            if not spell_name:
+
+                continue
+
+
+            # ------------------------------------------------
+            # Description
+            # ------------------------------------------------
 
             description = clean_spell_text(
                 cells[1].get_text(
@@ -4627,9 +4480,15 @@ async def scrape_class_spells(class_code):
             )
 
 
-            # =================================================
-            # CLASS
-            # =================================================
+            # ------------------------------------------------
+            # Class
+            #
+            # This is usually a link such as:
+            #
+            # Val
+            # Mig
+            # Mar
+            # ------------------------------------------------
 
             spell_class = clean_spell_text(
                 cells[2].get_text(
@@ -4639,9 +4498,9 @@ async def scrape_class_spells(class_code):
             )
 
 
-            # =================================================
-            # LOCATION
-            # =================================================
+            # ------------------------------------------------
+            # Location
+            # ------------------------------------------------
 
             location = clean_spell_text(
                 cells[3].get_text(
@@ -4651,9 +4510,9 @@ async def scrape_class_spells(class_code):
             )
 
 
-            # =================================================
-            # MANA
-            # =================================================
+            # ------------------------------------------------
+            # Mana
+            # ------------------------------------------------
 
             mana = clean_spell_text(
                 cells[4].get_text(
@@ -4663,169 +4522,85 @@ async def scrape_class_spells(class_code):
             )
 
 
-            # =================================================
-            # SKIP EMPTY SPELL
-            # =================================================
+            # ------------------------------------------------
+            # Deduplicate
+            # ------------------------------------------------
 
-            if not spell_name:
+            dedupe_key = (
+                level,
+                spell_name.lower()
+            )
+
+
+            if dedupe_key in seen:
 
                 continue
 
 
-            # =================================================
-            # CREATE RECORD
-            # =================================================
-
-            record = {
-
-                "class_code":
-                    class_code,
-
-                "class_name":
-                    class_name,
-
-                "spell_name":
-                    spell_name,
-
-                "level":
-                    level,
-
-                "description":
-                    description,
-
-                "spell_class":
-                    spell_class,
-
-                "location":
-                    location,
-
-                "mana":
-                    mana,
-
-                "wiki_url":
-                    wiki_url
-
-            }
-
-
-            records.append(
-                record
+            seen.add(
+                dedupe_key
             )
 
 
-            # =================================================
-            # LOG RESULT
-            # =================================================
-
-            print(
-                f"   ✓ Level {level}: "
-                f"{spell_name}"
-            )
-
-            print(
-                f"      Description: "
-                f"{description[:150]}"
-            )
-
-            print(
-                f"      Class: "
-                f"{spell_class}"
-            )
-
-            print(
-                f"      Location: "
-                f"{location}"
-            )
-
-            print(
-                f"      Mana: "
-                f"{mana}"
-            )
+            spells.append({
+                "class_code": class_code,
+                "class_name": class_name,
+                "spell_name": spell_name,
+                "level": level,
+                "description": description,
+                "spell_class": spell_class,
+                "location": location,
+                "mana": mana,
+                "wiki_url": wiki_url
+            })
 
 
-    # ====================================================
-    # REMOVE DUPLICATES
-    # ====================================================
-
-    unique_records = []
-
-    seen = set()
+            level_count += 1
 
 
-    for record in records:
-
-        key = (
-
-            record[
-                "spell_name"
-            ]
-            .strip()
-            .lower(),
-
-            record[
-                "level"
-            ]
-
+        print(
+            f"   ✅ Level {level}: "
+            f"{level_count} abilities"
         )
 
 
-        if key in seen:
+    # --------------------------------------------------------
+    # Final result
+    # --------------------------------------------------------
 
-            continue
+    print("")
+    print(
+        f"✅ {class_name}: "
+        f"{len(spells)} total abilities found."
+    )
+    print("")
 
 
-        seen.add(
-            key
+    # Debug preview.
+    for spell in spells[:10]:
+
+        print(
+            f"   L{spell['level']} | "
+            f"{spell['spell_name']} | "
+            f"{spell['spell_class']} | "
+            f"{spell['location']} | "
+            f"{spell['mana']}"
         )
 
 
-        unique_records.append(
-            record
-        )
+    return spells
 
 
-    records = unique_records
-
-
-    # ====================================================
-    # FINAL RESULTS
-    # ====================================================
-
-    print(
-        f"\n{'=' * 70}"
-    )
-
-    print(
-        f"📚 SPELL SCRAPE COMPLETE"
-    )
-
-    print(
-        f"Class: {class_name}"
-    )
-
-    print(
-        f"Records found: {len(records)}"
-    )
-
-    print(
-        f"{'=' * 70}\n"
-    )
-
-
-    return records
-
-
-# ========================================================
-# REPLACE CLASS SPELLS
-# ========================================================
+# ------------------------------------------------------------
+# Replace one class in database
+# ------------------------------------------------------------
 
 async def replace_class_spells(
     class_code,
-    records
+    spells
 ):
 
-    await ensure_spells_table()
-
+    class_code = class_code.upper()
 
     class_name = SPELL_CLASS_NAMES.get(
         class_code,
@@ -4835,150 +4610,127 @@ async def replace_class_spells(
 
     async with db_pool.acquire() as conn:
 
-        # =================================================
-        # DELETE EXISTING CLASS RECORDS
-        # =================================================
+        async with conn.transaction():
 
-        await conn.execute(
-            """
-            DELETE FROM class_spells
-            WHERE class_code = $1
-            """,
-            class_code
-        )
-
-
-        # =================================================
-        # INSERT NEW RECORDS
-        # =================================================
-
-        for record in records:
+            # ------------------------------------------------
+            # Remove old records for this class.
+            # ------------------------------------------------
 
             await conn.execute(
                 """
-                INSERT INTO class_spells (
-                    class_code,
-                    class_name,
-                    spell_name,
-                    level,
-                    description,
-                    spell_class,
-                    location,
-                    mana,
-                    wiki_url,
-                    created_at,
-                    updated_at
-                )
-
-                VALUES (
-                    $1,
-                    $2,
-                    $3,
-                    $4,
-                    $5,
-                    $6,
-                    $7,
-                    $8,
-                    $9,
-                    NOW(),
-                    NOW()
-                )
+                DELETE FROM class_spells
+                WHERE class_code = $1
                 """,
-
-                record[
-                    "class_code"
-                ],
-
-                record[
-                    "class_name"
-                ],
-
-                record[
-                    "spell_name"
-                ],
-
-                record[
-                    "level"
-                ],
-
-                record[
-                    "description"
-                ],
-
-                record[
-                    "spell_class"
-                ],
-
-                record[
-                    "location"
-                ],
-
-                record[
-                    "mana"
-                ],
-
-                record[
-                    "wiki_url"
-                ]
+                class_code
             )
+
+
+            # ------------------------------------------------
+            # Insert newly scraped records.
+            # ------------------------------------------------
+
+            for spell in spells:
+
+                await conn.execute(
+                    """
+                    INSERT INTO class_spells (
+                        class_code,
+                        class_name,
+                        spell_name,
+                        level,
+                        description,
+                        spell_class,
+                        location,
+                        mana,
+                        wiki_url,
+                        created_at,
+                        updated_at
+                    )
+                    VALUES (
+                        $1,
+                        $2,
+                        $3,
+                        $4,
+                        $5,
+                        $6,
+                        $7,
+                        $8,
+                        $9,
+                        NOW(),
+                        NOW()
+                    )
+                    """,
+
+                    spell["class_code"],
+                    spell["class_name"],
+                    spell["spell_name"],
+                    spell["level"],
+                    spell["description"],
+                    spell["spell_class"],
+                    spell["location"],
+                    spell["mana"],
+                    spell["wiki_url"]
+                )
 
 
     print(
-        f"💾 Replaced "
-        f"{len(records)} records "
-        f"for {class_name}."
+        f"💾 Replaced {class_name} spell data: "
+        f"{len(spells)} records."
     )
 
 
-# ========================================================
-# WIKI SPELL CLASS SELECT
-# ========================================================
+    return len(spells)
 
-class WikiSpellsClassSelect(
-    Select
-):
+
+# ============================================================
+# /wikispells
+# ============================================================
+
+class WikiSpellsClassView(discord.ui.View):
 
     def __init__(self):
 
-        options = [
+        super().__init__(
+            timeout=300
+        )
 
-            SelectOption(
-                label=SPELL_CLASS_NAMES[
-                    code
-                ],
 
-                value=code,
+        options = []
 
-                description=(
-                    f"Import "
-                    f"{SPELL_CLASS_NAMES[code]} "
-                    f"spells and abilities"
+        for code, name in SPELL_CLASS_NAMES.items():
+
+            options.append(
+                discord.SelectOption(
+                    label=name,
+                    value=code
                 )
             )
 
-            for code in SPELL_CLASS_NAMES
-        ]
 
-
-        super().__init__(
-            placeholder=(
-                "Select a class to import"
-            ),
-
+        self.class_select = discord.ui.Select(
+            placeholder="🔮 Select a class to import...",
             min_values=1,
-
             max_values=1,
-
             options=options
         )
 
 
-    async def callback(
+        self.class_select.callback = (
+            self.select_class
+        )
+
+
+        self.add_item(
+            self.class_select
+        )
+
+
+    async def select_class(
         self,
-        interaction: Interaction
+        interaction: discord.Interaction
     ):
 
-        class_code = self.values[0]
+        class_code = self.class_select.values[0]
 
         class_name = SPELL_CLASS_NAMES[
             class_code
@@ -4986,403 +4738,397 @@ class WikiSpellsClassSelect(
 
 
         await interaction.response.defer(
-            ephemeral=True
+            ephemeral=True,
+            thinking=True
         )
 
 
         try:
 
-            print(
-                f"🔎 Starting wiki spell "
-                f"import for {class_name}..."
+            await ensure_spells_table()
+
+
+            await interaction.edit_original_response(
+                content=(
+                    f"🔮 Scraping **{class_name}** "
+                    f"from the Monsters & Memories Wiki...\n\n"
+                    f"This may take a moment."
+                ),
+                view=None
             )
 
 
-            records = await scrape_class_spells(
+            spells = await scrape_class_spells(
                 class_code
             )
 
 
-            if not records:
+            if not spells:
 
-                await interaction.followup.send(
-                    (
-                        f"❌ No spells or abilities "
-                        f"were found for "
-                        f"**{class_name}**.\n\n"
-                        f"The Railway logs contain "
-                        f"the level-by-level search "
-                        f"results."
+                await interaction.edit_original_response(
+                    content=(
+                        f"❌ No abilities were found "
+                        f"for **{class_name}**.\n\n"
+                        f"Check the Railway console for "
+                        f"the scraper diagnostics."
                     ),
-
-                    ephemeral=True
+                    view=None
                 )
 
                 return
 
 
-            # --------------------------------------------
-            # Replace this class in database
-            # --------------------------------------------
-
-            await replace_class_spells(
+            count = await replace_class_spells(
                 class_code,
-                records
+                spells
             )
 
 
-            await interaction.followup.send(
-                (
-                    f"✅ **{class_name}** spell "
-                    f"database updated.\n\n"
-                    f"📚 Imported: "
-                    f"**{len(records)}** "
-                    f"spells/abilities."
+            await interaction.edit_original_response(
+                content=(
+                    f"✅ **{class_name}** spell database "
+                    f"updated successfully!\n\n"
+                    f"🔮 Abilities imported: **{count}**\n"
+                    f"🌐 Source: [Monsters & Memories Wiki]"
+                    f"({spells[0]['wiki_url']})"
                 ),
-
-                ephemeral=True
+                view=None
             )
 
 
         except Exception as e:
 
-            print(
-                f"❌ Error importing "
-                f"{class_name} spells: "
-                f"{e}"
-            )
-
-
             import traceback
+
+            print(
+                "❌ /wikispells error:"
+            )
 
             traceback.print_exc()
 
 
-            await interaction.followup.send(
-                (
-                    f"❌ Error importing "
-                    f"**{class_name}**:\n"
-                    f"`{e}`"
-                ),
+            try:
 
-                ephemeral=True
-            )
+                await interaction.edit_original_response(
+                    content=(
+                        f"❌ Error importing "
+                        f"**{class_name}**:\n"
+                        f"`{e}`"
+                    ),
+                    view=None
+                )
 
+            except Exception:
 
-# ========================================================
-# WIKI SPELLS VIEW
-# ========================================================
-
-class WikiSpellsView(
-    View
-):
-
-    def __init__(self):
-
-        super().__init__(
-            timeout=180
-        )
+                pass
 
 
-        self.add_item(
-            WikiSpellsClassSelect()
-        )
-
-
-# ========================================================
-# /wikispells
-#
-# Scrape a class from the wiki and replace that
-# class's database records.
-# ========================================================
+# ------------------------------------------------------------
+# /wikispells command
+# ------------------------------------------------------------
 
 @bot.tree.command(
     name="wikispells",
-    description=(
-        "Import class spells and abilities "
-        "from the wiki"
-    )
+    description="Import or replace a class's spells and abilities from the Wiki."
 )
-
+@app_commands.checks.has_permissions(
+    administrator=True
+)
 async def wikispells(
-    interaction: Interaction
+    interaction: discord.Interaction
 ):
 
     await ensure_spells_table()
 
 
+    view = WikiSpellsClassView()
+
+
     await interaction.response.send_message(
         (
-            "📚 **Wiki Spell Importer**\n\n"
-            "Select a class below.\n\n"
-            "The bot will search the wiki for "
-            "**Level 1 through Level 60** and "
-            "replace that class's existing "
-            "spell/ability records."
+            "🔮 **Wiki Spell Import**\n\n"
+            "Select a class below.\n"
+            "The existing records for that class will be "
+            "replaced with the current Wiki data."
         ),
-
-        view=WikiSpellsView(),
-
+        view=view,
         ephemeral=True
     )
 
 
-# ========================================================
-# SPELL CLASS SELECT
-# ========================================================
+# ============================================================
+# SPELL SEARCH
+# ============================================================
 
-class SpellsClassSelect(
-    Select
-):
+class SpellSearchClassView(discord.ui.View):
 
-    def __init__(
-        self,
-        parent_view
-    ):
-
-        self.parent_view = parent_view
-
-
-        options = [
-
-            SelectOption(
-                label=SPELL_CLASS_NAMES[
-                    code
-                ],
-
-                value=code
-            )
-
-            for code in SPELL_CLASS_NAMES
-        ]
-
+    def __init__(self):
 
         super().__init__(
-            placeholder="Select a class",
+            timeout=300
+        )
 
+
+        options = []
+
+        for code, name in SPELL_CLASS_NAMES.items():
+
+            options.append(
+                discord.SelectOption(
+                    label=name,
+                    value=code
+                )
+            )
+
+
+        self.class_select = discord.ui.Select(
+            placeholder="🔮 Select class...",
             min_values=1,
-
             max_values=1,
-
             options=options
         )
 
 
-    async def callback(
+        self.class_select.callback = (
+            self.select_class
+        )
+
+
+        self.add_item(
+            self.class_select
+        )
+
+
+    async def select_class(
         self,
-        interaction: Interaction
+        interaction: discord.Interaction
     ):
 
-        self.parent_view.class_code = (
-            self.values[0]
+        class_code = self.class_select.values[0]
+
+        class_name = SPELL_CLASS_NAMES[
+            class_code
+        ]
+
+
+        view = SpellLevelRangeView(
+            class_code=class_code,
+            class_name=class_name
         )
 
 
         await interaction.response.edit_message(
-            view=self.parent_view
-        )
-
-
-# ========================================================
-# SPELL MINIMUM LEVEL SELECT
-# ========================================================
-
-class SpellsMinLevelSelect(
-    Select
-):
-
-    def __init__(
-        self,
-        parent_view
-    ):
-
-        self.parent_view = parent_view
-
-
-        options = [
-
-            SelectOption(
-                label=f"Level {level}",
-
-                value=str(level)
-            )
-
-            for level in SPELL_LEVEL_OPTIONS
-        ]
-
-
-        super().__init__(
-            placeholder=(
-                "Select minimum level"
+            content=(
+                f"🔮 **{class_name} Spells**\n\n"
+                f"Select the minimum and maximum level."
             ),
-
-            min_values=1,
-
-            max_values=1,
-
-            options=options
+            view=view
         )
 
 
-    async def callback(
+# ============================================================
+# LEVEL RANGE VIEW
+#
+# Discord Select menus are limited to 25 options.
+# Instead of putting 60 individual levels into one Select,
+# this uses level ranges.
+# ============================================================
+
+SPELL_LEVEL_RANGES = [
+    ("1–10", 1, 10),
+    ("11–20", 11, 20),
+    ("21–30", 21, 30),
+    ("31–40", 31, 40),
+    ("41–50", 41, 50),
+    ("51–60", 51, 60)
+]
+
+
+class SpellLevelRangeView(discord.ui.View):
+
+    def __init__(
         self,
-        interaction: Interaction
+        class_code,
+        class_name
     ):
 
-        self.parent_view.min_level = int(
-            self.values[0]
+        super().__init__(
+            timeout=300
+        )
+
+        self.class_code = class_code
+        self.class_name = class_name
+
+        self.min_level = None
+        self.max_level = None
+
+
+        # ----------------------------------------------------
+        # Minimum level
+        # ----------------------------------------------------
+
+        min_options = []
+
+        for label, low, high in SPELL_LEVEL_RANGES:
+
+            min_options.append(
+                discord.SelectOption(
+                    label=f"{label}",
+                    description=f"Levels {low} through {high}",
+                    value=str(low)
+                )
+            )
+
+
+        self.min_select = discord.ui.Select(
+            placeholder="Minimum level range...",
+            min_values=1,
+            max_values=1,
+            options=min_options
+        )
+
+
+        self.min_select.callback = (
+            self.select_min
+        )
+
+
+        self.add_item(
+            self.min_select
+        )
+
+
+        # ----------------------------------------------------
+        # Maximum level
+        # ----------------------------------------------------
+
+        max_options = []
+
+        for label, low, high in SPELL_LEVEL_RANGES:
+
+            max_options.append(
+                discord.SelectOption(
+                    label=f"{label}",
+                    description=f"Levels {low} through {high}",
+                    value=str(high)
+                )
+            )
+
+
+        self.max_select = discord.ui.Select(
+            placeholder="Maximum level range...",
+            min_values=1,
+            max_values=1,
+            options=max_options
+        )
+
+
+        self.max_select.callback = (
+            self.select_max
+        )
+
+
+        self.add_item(
+            self.max_select
+        )
+
+
+        # ----------------------------------------------------
+        # Search button
+        # ----------------------------------------------------
+
+        search_button = discord.ui.Button(
+            label="🔍 Search",
+            style=discord.ButtonStyle.success
+        )
+
+
+        search_button.callback = (
+            self.search_spells
+        )
+
+
+        self.add_item(
+            search_button
+        )
+
+
+    async def select_min(
+        self,
+        interaction: discord.Interaction
+    ):
+
+        self.min_level = int(
+            self.min_select.values[0]
         )
 
 
         await interaction.response.edit_message(
-            view=self.parent_view
-        )
-
-
-# ========================================================
-# SPELL MAXIMUM LEVEL SELECT
-# ========================================================
-
-class SpellsMaxLevelSelect(
-    Select
-):
-
-    def __init__(
-        self,
-        parent_view
-    ):
-
-        self.parent_view = parent_view
-
-
-        options = [
-
-            SelectOption(
-                label=f"Level {level}",
-
-                value=str(level)
-            )
-
-            for level in SPELL_LEVEL_OPTIONS
-        ]
-
-
-        super().__init__(
-            placeholder=(
-                "Select maximum level"
+            content=(
+                f"🔮 **{self.class_name} Spells**\n\n"
+                f"Minimum level range selected: "
+                f"**{self.min_level}+**\n\n"
+                f"Now select the maximum level range."
             ),
-
-            min_values=1,
-
-            max_values=1,
-
-            options=options
+            view=self
         )
 
 
-    async def callback(
+    async def select_max(
         self,
-        interaction: Interaction
+        interaction: discord.Interaction
     ):
 
-        self.parent_view.max_level = int(
-            self.values[0]
+        self.max_level = int(
+            self.max_select.values[0]
         )
 
 
         await interaction.response.edit_message(
-            view=self.parent_view
+            content=(
+                f"🔮 **{self.class_name} Spells**\n\n"
+                f"Minimum level: "
+                f"**{self.min_level if self.min_level else 'Not selected'}**\n"
+                f"Maximum level: "
+                f"**{self.max_level}**\n\n"
+                f"Press **Search**."
+            ),
+            view=self
         )
 
 
-# ========================================================
-# SPELL SEARCH BUTTON
-# ========================================================
-
-class SpellsSearchButton(
-    Button
-):
-
-    def __init__(
+    async def search_spells(
         self,
-        parent_view
+        interaction: discord.Interaction
     ):
 
-        self.parent_view = parent_view
-
-
-        super().__init__(
-            label="Search Spells",
-
-            style=discord.ButtonStyle.primary
-        )
-
-
-    async def callback(
-        self,
-        interaction: Interaction
-    ):
-
-        view = self.parent_view
-
-
-        # =================================================
-        # VALIDATE CLASS
-        # =================================================
-
-        if not view.class_code:
+        if self.min_level is None:
 
             await interaction.response.send_message(
-                "❌ Select a class first.",
-
+                "❌ Please select a minimum level.",
                 ephemeral=True
             )
 
             return
 
 
-        # =================================================
-        # VALIDATE MINIMUM LEVEL
-        # =================================================
-
-        if view.min_level is None:
+        if self.max_level is None:
 
             await interaction.response.send_message(
-                "❌ Select a minimum level.",
-
+                "❌ Please select a maximum level.",
                 ephemeral=True
             )
 
             return
 
 
-        # =================================================
-        # VALIDATE MAXIMUM LEVEL
-        # =================================================
-
-        if view.max_level is None:
-
-            await interaction.response.send_message(
-                "❌ Select a maximum level.",
-
-                ephemeral=True
-            )
-
-            return
-
-
-        # =================================================
-        # VALIDATE RANGE
-        # =================================================
-
-        if view.min_level > view.max_level:
+        if self.max_level < self.min_level:
 
             await interaction.response.send_message(
                 (
-                    "❌ Minimum level cannot be "
-                    "higher than maximum level."
+                    "❌ Maximum level cannot be lower "
+                    "than the minimum level."
                 ),
-
                 ephemeral=True
             )
 
@@ -5390,310 +5136,342 @@ class SpellsSearchButton(
 
 
         await interaction.response.defer(
-            ephemeral=True
+            thinking=True
         )
 
 
-        await ensure_spells_table()
+        try:
+
+            await ensure_spells_table()
 
 
-        # =================================================
-        # DATABASE QUERY
-        # =================================================
+            async with db_pool.acquire() as conn:
 
-        async with db_pool.acquire() as conn:
+                rows = await conn.fetch(
+                    """
+                    SELECT
+                        spell_name,
+                        level,
+                        description,
+                        spell_class,
+                        location,
+                        mana,
+                        wiki_url
+                    FROM class_spells
+                    WHERE class_code = $1
+                      AND level >= $2
+                      AND level <= $3
+                    ORDER BY level ASC, spell_name ASC
+                    """,
 
-            rows = await conn.fetch(
-                """
-                SELECT
-                    spell_name,
-                    level,
-                    description,
-                    spell_class,
-                    location,
-                    mana
-                FROM class_spells
-
-                WHERE class_code = $1
-
-                  AND level >= $2
-
-                  AND level <= $3
-
-                ORDER BY
-                    level ASC,
-                    spell_name ASC
-                """,
-
-                view.class_code,
-
-                view.min_level,
-
-                view.max_level
-            )
+                    self.class_code,
+                    self.min_level,
+                    self.max_level
+                )
 
 
-        class_name = SPELL_CLASS_NAMES[
-            view.class_code
-        ]
+            if not rows:
+
+                await interaction.edit_original_response(
+                    content=(
+                        f"❌ No **{self.class_name}** "
+                        f"abilities were found between "
+                        f"levels **{self.min_level}–{self.max_level}**.\n\n"
+                        f"Use `/wikispells` first to import "
+                        f"this class."
+                    ),
+                    view=None
+                )
+
+                return
 
 
-        # =================================================
-        # NO RESULTS
-        # =================================================
+            embeds = []
 
-        if not rows:
+            # Discord embed field limit is 25.
+            # We'll put several abilities into each embed.
 
-            await interaction.followup.send(
-                (
-                    f"❌ No spells or abilities "
-                    f"found for **{class_name}** "
-                    f"between levels "
-                    f"**{view.min_level}–"
-                    f"{view.max_level}**."
+            current_embed = discord.Embed(
+                title=(
+                    f"🔮 {self.class_name} "
+                    f"Abilities"
                 ),
-
-                ephemeral=True
-            )
-
-            return
-
-
-        # =================================================
-        # BUILD DISCORD RESULTS
-        # =================================================
-
-        chunks = []
-
-
-        current_chunk = (
-            f"📚 **{class_name} "
-            f"Spells & Abilities**\n"
-            f"Levels **{view.min_level}–"
-            f"{view.max_level}**\n\n"
-        )
-
-
-        for row in rows:
-
-            spell_name = row[
-                "spell_name"
-            ]
-
-            level = row[
-                "level"
-            ]
-
-            description = row[
-                "description"
-            ]
-
-            spell_class = row[
-                "spell_class"
-            ]
-
-            location = row[
-                "location"
-            ]
-
-            mana = row[
-                "mana"
-            ]
-
-
-            # =================================================
-            # SPELL ENTRY
-            # =================================================
-
-            entry = (
-                f"**{spell_name}** "
-                f"— Level {level}\n"
+                description=(
+                    f"Levels "
+                    f"**{self.min_level}–{self.max_level}**"
+                ),
+                color=discord.Color.blue()
             )
 
 
-            if description:
+            field_count = 0
 
-                entry += (
-                    f"> {description}\n"
+
+            for row in rows:
+
+                spell_name = row["spell_name"]
+
+                description = (
+                    row["description"]
+                    or "No description listed."
                 )
 
 
-            if spell_class:
-
-                entry += (
-                    f"**Class:** "
-                    f"{spell_class}\n"
+                spell_class = (
+                    row["spell_class"]
+                    or "Unknown"
                 )
 
 
-            if location:
-
-                entry += (
-                    f"**Location:** "
-                    f"{location}\n"
+                location = (
+                    row["location"]
+                    or "Unknown"
                 )
 
 
-            if mana:
-
-                entry += (
-                    f"**Mana:** "
-                    f"{mana}\n"
+                mana = (
+                    row["mana"]
+                    or "Unknown"
                 )
 
 
-            entry += "\n"
-
-
-            # =================================================
-            # DISCORD MESSAGE LIMIT
-            # =================================================
-
-            if (
-                len(current_chunk)
-                + len(entry)
-                > 3900
-            ):
-
-                chunks.append(
-                    current_chunk
+                value = (
+                    f"{description}\n\n"
+                    f"**Class:** `{spell_class}`\n"
+                    f"**Location:** `{location}`\n"
+                    f"**Mana:** `{mana}`"
                 )
 
 
-                current_chunk = (
-                    f"📚 **{class_name} "
-                    f"Spells & Abilities** "
-                    f"(continued)\n\n"
+                # Discord field values max out at 1024.
+                if len(value) > 1024:
+
+                    value = (
+                        value[:1000]
+                        + "..."
+                    )
+
+
+                if field_count >= 25:
+
+                    embeds.append(
+                        current_embed
+                    )
+
+
+                    current_embed = discord.Embed(
+                        title=(
+                            f"🔮 {self.class_name} "
+                            f"Abilities"
+                        ),
+                        description=(
+                            f"Levels "
+                            f"**{self.min_level}–{self.max_level}**"
+                        ),
+                        color=discord.Color.blue()
+                    )
+
+
+                    field_count = 0
+
+
+                current_embed.add_field(
+                    name=(
+                        f"Level {row['level']} — "
+                        f"{spell_name}"
+                    ),
+                    value=value,
+                    inline=False
                 )
 
 
-            current_chunk += entry
+                field_count += 1
 
 
-        # =================================================
-        # ADD FINAL CHUNK
-        # =================================================
+            if field_count > 0:
 
-        if current_chunk.strip():
+                embeds.append(
+                    current_embed
+                )
 
-            chunks.append(
-                current_chunk
+
+            # ------------------------------------------------
+            # Add page footer
+            # ------------------------------------------------
+
+            total_results = len(rows)
+
+            for index, embed in enumerate(embeds):
+
+                embed.set_footer(
+                    text=(
+                        f"Page {index + 1}/{len(embeds)} "
+                        f"• {total_results} abilities"
+                    )
+                )
+
+
+            # ------------------------------------------------
+            # First page
+            # ------------------------------------------------
+
+            await interaction.edit_original_response(
+                content=None,
+                embeds=[embeds[0]],
+                view=SpellResultsView(
+                    embeds=embeds
+                )
             )
 
 
-        # =================================================
-        # SEND RESULTS
-        # =================================================
+        except Exception as e:
 
-        for chunk in chunks:
+            import traceback
 
-            await interaction.followup.send(
-                chunk,
+            print(
+                "❌ /spells error:"
+            )
 
-                ephemeral=True
+            traceback.print_exc()
+
+
+            await interaction.edit_original_response(
+                content=(
+                    f"❌ Error searching spells:\n"
+                    f"`{e}`"
+                ),
+                view=None
             )
 
 
-# ========================================================
-# SPELLS VIEW
-# ========================================================
+# ============================================================
+# SPELL RESULT PAGINATION
+# ============================================================
 
-class SpellsView(
-    View
-):
+class SpellResultsView(discord.ui.View):
 
-    def __init__(self):
+    def __init__(
+        self,
+        embeds
+    ):
 
         super().__init__(
-            timeout=180
+            timeout=300
+        )
+
+        self.embeds = embeds
+        self.page = 0
+
+
+        self.previous_button = discord.ui.Button(
+            label="◀ Previous",
+            style=discord.ButtonStyle.secondary
         )
 
 
-        self.class_code = None
+        self.next_button = discord.ui.Button(
+            label="Next ▶",
+            style=discord.ButtonStyle.secondary
+        )
 
-        self.min_level = None
 
-        self.max_level = None
+        self.previous_button.callback = (
+            self.previous_page
+        )
 
 
-        # ------------------------------------------------
-        # CLASS
-        # ------------------------------------------------
+        self.next_button.callback = (
+            self.next_page
+        )
+
 
         self.add_item(
-            SpellsClassSelect(
-                self
-            )
+            self.previous_button
         )
-
-
-        # ------------------------------------------------
-        # MINIMUM LEVEL
-        # ------------------------------------------------
 
         self.add_item(
-            SpellsMinLevelSelect(
-                self
-            )
+            self.next_button
         )
 
 
-        # ------------------------------------------------
-        # MAXIMUM LEVEL
-        # ------------------------------------------------
+        self.update_buttons()
 
-        self.add_item(
-            SpellsMaxLevelSelect(
-                self
-            )
+
+    def update_buttons(self):
+
+        self.previous_button.disabled = (
+            self.page <= 0
+        )
+
+        self.next_button.disabled = (
+            self.page >= len(self.embeds) - 1
         )
 
 
-        # ------------------------------------------------
-        # SEARCH BUTTON
-        # ------------------------------------------------
+    async def previous_page(
+        self,
+        interaction: discord.Interaction
+    ):
 
-        self.add_item(
-            SpellsSearchButton(
-                self
-            )
+        if self.page > 0:
+
+            self.page -= 1
+
+
+        self.update_buttons()
+
+
+        await interaction.response.edit_message(
+            embeds=[self.embeds[self.page]],
+            view=self
         )
 
 
-# ========================================================
+    async def next_page(
+        self,
+        interaction: discord.Interaction
+    ):
+
+        if self.page < len(self.embeds) - 1:
+
+            self.page += 1
+
+
+        self.update_buttons()
+
+
+        await interaction.response.edit_message(
+            embeds=[self.embeds[self.page]],
+            view=self
+        )
+
+
+# ============================================================
 # /spells
-#
-# Search the spell database.
-# ========================================================
+# ============================================================
 
 @bot.tree.command(
     name="spells",
-    description=(
-        "Search class spells and abilities "
-        "by level"
-    )
+    description="Search class spells and abilities."
 )
-
 async def spells(
-    interaction: Interaction
+    interaction: discord.Interaction
 ):
 
     await ensure_spells_table()
 
 
+    view = SpellSearchClassView()
+
+
     await interaction.response.send_message(
         (
-            "📚 **Spell & Ability Database**\n\n"
-            "Select a class, minimum level, "
-            "and maximum level.\n\n"
-            "Then press **Search Spells**."
+            "🔮 **Spell & Ability Search**\n\n"
+            "Select a class below."
         ),
-
-        view=SpellsView(),
-
+        view=view,
         ephemeral=True
     )
-
 
 
 # ---------------- Bot Setup ----------------
