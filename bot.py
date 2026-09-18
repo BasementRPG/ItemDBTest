@@ -5071,9 +5071,10 @@ class SpellsSelectionView(View):
             # This edits the existing public selection message.
             # --------------------------------------------------------
         
-            await interaction.edit_original_response(
-                content=None,
-                embed=embed,
+
+            await interaction.response.edit_message(
+                content=embed,
+                embed=None,
                 view=SpellsResultsView(
                     self.selected_class,
                     spells,
