@@ -3937,30 +3937,93 @@ SPELL_CLASS_CODES = list(SPELL_CLASS_NAMES.keys())
 # ------------------------------------------------------------
 
 async def ensure_spells_table():
+    global db_pool
 
     async with db_pool.acquire() as conn:
 
+        # Create the table if it does not exist.
         await conn.execute("""
             CREATE TABLE IF NOT EXISTS class_spells (
                 id BIGSERIAL PRIMARY KEY,
-
                 class_code TEXT NOT NULL,
                 class_name TEXT NOT NULL,
-
                 spell_name TEXT NOT NULL,
                 level INTEGER NOT NULL,
-
-                description TEXT DEFAULT '',
-                spell_class TEXT DEFAULT '',
-                location TEXT DEFAULT '',
-                mana TEXT DEFAULT '',
-
-                wiki_url TEXT DEFAULT '',
-
-                created_at TIMESTAMP DEFAULT NOW(),
-                updated_at TIMESTAMP DEFAULT NOW()
+                description TEXT,
+                spell_class TEXT,
+                location TEXT,
+                mana TEXT,
+                wiki_url TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         """)
+
+        # -----------------------------------------------------
+        # Add any columns that may be missing from an older
+        # version of the table.
+        # -----------------------------------------------------
+
+        await conn.execute("""
+            ALTER TABLE class_spells
+            ADD COLUMN IF NOT EXISTS class_code TEXT
+        """)
+
+        await conn.execute("""
+            ALTER TABLE class_spells
+            ADD COLUMN IF NOT EXISTS class_name TEXT
+        """)
+
+        await conn.execute("""
+            ALTER TABLE class_spells
+            ADD COLUMN IF NOT EXISTS spell_name TEXT
+        """)
+
+        await conn.execute("""
+            ALTER TABLE class_spells
+            ADD COLUMN IF NOT EXISTS level INTEGER
+        """)
+
+        await conn.execute("""
+            ALTER TABLE class_spells
+            ADD COLUMN IF NOT EXISTS description TEXT
+        """)
+
+        await conn.execute("""
+            ALTER TABLE class_spells
+            ADD COLUMN IF NOT EXISTS spell_class TEXT
+        """)
+
+        await conn.execute("""
+            ALTER TABLE class_spells
+            ADD COLUMN IF NOT EXISTS location TEXT
+        """)
+
+        await conn.execute("""
+            ALTER TABLE class_spells
+            ADD COLUMN IF NOT EXISTS mana TEXT
+        """)
+
+        await conn.execute("""
+            ALTER TABLE class_spells
+            ADD COLUMN IF NOT EXISTS wiki_url TEXT
+        """)
+
+        await conn.execute("""
+            ALTER TABLE class_spells
+            ADD COLUMN IF NOT EXISTS created_at TIMESTAMP
+                DEFAULT CURRENT_TIMESTAMP
+        """)
+
+        await conn.execute("""
+            ALTER TABLE class_spells
+            ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP
+                DEFAULT CURRENT_TIMESTAMP
+        """)
+
+        # -----------------------------------------------------
+        # Indexes
+        # -----------------------------------------------------
 
         await conn.execute("""
             CREATE INDEX IF NOT EXISTS idx_class_spells_class
@@ -3973,9 +4036,11 @@ async def ensure_spells_table():
         """)
 
         await conn.execute("""
-            CREATE INDEX IF NOT EXISTS idx_class_spells_name
-            ON class_spells(spell_name)
+            CREATE INDEX IF NOT EXISTS idx_class_spells_class_level
+            ON class_spells(class_code, level)
         """)
+
+    print("[SPELLS] class_spells table verified.")
 
 
 # ------------------------------------------------------------
