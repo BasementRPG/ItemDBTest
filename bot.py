@@ -4596,8 +4596,7 @@ print(
     f"Found {len(records)} spell/ability records."
 )
 
-    return spells
-
+  
 
 # ============================================================
 # SAVE / REPLACE CLASS SPELLS
