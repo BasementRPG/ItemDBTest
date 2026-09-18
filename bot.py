@@ -5211,7 +5211,6 @@ async def get_class_spells(
 
     return rows
 
-
 # ============================================================
 # SPELL RESULTS EMBED
 # ============================================================
@@ -5254,7 +5253,8 @@ def create_spells_embed(
             f"Spells & Abilities"
         ),
         description=(
-            f"**{range_name}**"
+            f"**{range_name}**\n\n"
+            "━━━━━━━━━━━━━━━━━━━━"
         )
     )
 
@@ -5270,6 +5270,9 @@ def create_spells_embed(
         )
 
         return embed
+
+    current_level = None
+    level_text = ""
 
     for spell in page_spells:
 
@@ -5302,36 +5305,53 @@ def create_spells_embed(
         )
 
         # ----------------------------------------------------
-        # LARGE LEVEL + SPELL NAME
+        # NEW LEVEL HEADER
         # ----------------------------------------------------
 
-        entry = (
-            f"## Level {level} — {spell_name}\n"
+        if level != current_level:
+
+            if level_text:
+
+                embed.add_field(
+                    name="\u200b",
+                    value=level_text,
+                    inline=False
+                )
+
+            current_level = level
+
+            level_text = (
+                f"**LEVEL {level}**\n"
+                "━━━━━━━━━━━━━━━━━━━━\n\n"
+            )
+
+        # ----------------------------------------------------
+        # SPELL ENTRY
+        # ----------------------------------------------------
+
+        level_text += (
+            f"**{spell_name}**\n\n"
+            f"**Description:** {description}\n\n"
+            f"**Class:** {spell_class}  |  "
+            f"**Location:** {location}  |  "
+            f"**Mana:** {mana}\n\n"
         )
 
-        # ----------------------------------------------------
-        # DESCRIPTION
-        # ----------------------------------------------------
+    # --------------------------------------------------------
+    # ADD FINAL LEVEL
+    # --------------------------------------------------------
 
-        entry += (
-            f"{description}\n\n"
-        )
-
-        # ----------------------------------------------------
-        # CLASS / LOCATION / MANA
-        # ----------------------------------------------------
-
-        entry += (
-            f"**Class:** {spell_class}  •  "
-            f"**Location:** {location}  •  "
-            f"**Mana:** {mana}"
-        )
+    if level_text:
 
         embed.add_field(
             name="\u200b",
-            value=entry,
+            value=level_text,
             inline=False
         )
+
+    # --------------------------------------------------------
+    # PAGINATION
+    # --------------------------------------------------------
 
     embed.set_footer(
         text=(
