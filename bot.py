@@ -5030,7 +5030,7 @@ class SpellsSelectionView(View):
             style=discord.ButtonStyle.success
         )
 
-
+        
         async def view_callback(
             interaction: Interaction
         ):
@@ -5048,6 +5048,8 @@ class SpellsSelectionView(View):
             # Get the results.
             # --------------------------------------------------------
         
+            await interaction.response.defer()
+        
             spells = await get_class_spells(
                 self.selected_class,
                 self.min_level,
@@ -5064,12 +5066,13 @@ class SpellsSelectionView(View):
             # --------------------------------------------------------
             # REPLACE THE ORIGINAL /SPELLS MESSAGE.
             #
+            # Do NOT followup.send().
             # This edits the existing public selection message.
             # --------------------------------------------------------
         
-            await interaction.response.edit_message(
-                content=embed,
-                embed=None,
+            await interaction.edit_original_response(
+                content=None,
+                embed=embed,
                 view=SpellsResultsView(
                     self.selected_class,
                     spells,
@@ -5078,6 +5081,10 @@ class SpellsSelectionView(View):
                     public=True
                 )
             )
+
+        view_button.callback = (
+            view_callback
+        )
 
         self.add_item(
             view_button
@@ -5129,7 +5136,7 @@ class SpellsSelectionView(View):
             # ------------------------------------------------
 
             await interaction.followup.send(
-                content=embed,
+                embed=embed,
                 view=SpellsResultsView(
                     self.selected_class,
                     spells,
@@ -5206,7 +5213,7 @@ async def get_class_spells(
 
 
 # ============================================================
-# SPELL RESULTS FORMATTING
+# SPELL RESULTS EMBED
 # ============================================================
 
 def create_spells_embed(
@@ -5231,6 +5238,7 @@ def create_spells_embed(
     )
 
     if page >= total_pages:
+
         page = total_pages - 1
 
     start = page * per_page
@@ -5240,58 +5248,42 @@ def create_spells_embed(
         start:end
     ]
 
-    # ----------------------------------------------------
-    # REGULAR MESSAGE RESULT FORMATTING
-    # ----------------------------------------------------
-
-    lines = [
-        f"📖 **{class_name} — {range_name}**",
-        ""
-    ]
+    embed = discord.Embed(
+        title=(
+            f"📖 {class_name} "
+            f"Spells & Abilities"
+        ),
+        description=(
+            f"**{range_name}**"
+        )
+    )
 
     if not page_spells:
 
-        lines.append(
-            "No spells or abilities were found for this level range."
+        embed.add_field(
+            name="No Spells Found",
+            value=(
+                "No spells or abilities were "
+                "found for this level range."
+            ),
+            inline=False
         )
 
-        return "\n".join(lines)
-
-    current_level = None
+        return embed
 
     for spell in page_spells:
 
-        level = spell["level"]
+        spell_name = spell[
+            "spell_name"
+        ]
 
-        if level != current_level:
-
-            if current_level is not None:
-                lines.append("")
-
-            lines.append(
-                "━━━━━━━━━━━━━━━━━━━━"
-            )
-
-            lines.append(
-                f"**LEVEL {level}**"
-            )
-
-            lines.append(
-                "━━━━━━━━━━━━━━━━━━━━"
-            )
-
-            lines.append("")
-
-            current_level = level
-
-        spell_name = (
-            spell["spell_name"]
-            or "Unknown"
-        )
+        level = spell[
+            "level"
+        ]
 
         description = (
             spell["description"]
-            or "—"
+            or "No description available."
         )
 
         spell_class = (
@@ -5309,30 +5301,46 @@ def create_spells_embed(
             or "—"
         )
 
-        lines.append(
-            f"**{spell_name}**"
+        # ----------------------------------------------------
+        # LARGE LEVEL + SPELL NAME
+        # ----------------------------------------------------
+
+        entry = (
+            f"## Level {level} — {spell_name}\n"
         )
 
-        lines.append("")
+        # ----------------------------------------------------
+        # DESCRIPTION
+        # ----------------------------------------------------
 
-        lines.append(
-            f"**Description:** {description}"
+        entry += (
+            f"{description}\n\n"
         )
 
-        lines.append(
-            f"**Class:** {spell_class}  |  "
-            f"**Location:** {location}  |  "
+        # ----------------------------------------------------
+        # CLASS / LOCATION / MANA
+        # ----------------------------------------------------
+
+        entry += (
+            f"**Class:** {spell_class}  •  "
+            f"**Location:** {location}  •  "
             f"**Mana:** {mana}"
         )
 
-        lines.append("")
+        embed.add_field(
+            name="\u200b",
+            value=entry,
+            inline=False
+        )
 
-    lines.append(
-        f"**Page {page + 1}/{total_pages} • "
-        f"{len(spells)} total abilities**"
+    embed.set_footer(
+        text=(
+            f"Page {page + 1}/{total_pages} • "
+            f"{len(spells)} total abilities"
+        )
     )
 
-    return "\n".join(lines)
+    return embed
 
 
 # ============================================================
@@ -5393,8 +5401,8 @@ class SpellsResultsView(View):
             )
 
             await interaction.response.edit_message(
-                content=embed,
-                embed=None,
+                content=None,
+                embed=embed,
                 view=SpellsResultsView(
                     self.class_code,
                     self.spells,
@@ -5438,8 +5446,8 @@ class SpellsResultsView(View):
             )
 
             await interaction.response.edit_message(
-                content=embed,
-                embed=None,
+                content=None,
+                embed=embed,
                 view=SpellsResultsView(
                     self.class_code,
                     self.spells,
@@ -5740,8 +5748,8 @@ class SpellsPrivateLevelSelect(Select):
         )
 
         await interaction.edit_original_response(
-            content=embed,
-            embed=None,
+            content=None,
+            embed=embed,
             view=SpellsResultsView(
                 self.class_code,
                 spells,
