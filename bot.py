@@ -4183,80 +4183,112 @@ async def scrape_class_spells(class_code):
 
     spells = []
 
-    # --------------------------------------------------------
-    # Look through all wiki tables
-    # --------------------------------------------------------
+   # --------------------------------------------------------
+# FIND SPELLS/ABILITIES BY LEVEL
+#
+# The wiki organizes the class page like this:
+#
+# <h2 id="Level_1">Level 1</h2>
+#     spell information
+#
+# <h2 id="Level_2">Level 2</h2>
+#     spell information
+#
+# ...
+#
+# <h2 id="Level_60">Level 60</h2>
+#     spell information
+#
+# We only look between these Level H2 headings.
+# --------------------------------------------------------
 
-    tables = soup.find_all("table")
+records = []
 
-    print(
-        f"🔎 Found {len(tables)} tables on "
-        f"{class_name} page."
+for level in range(1, 61):
+
+    level_id = f"Level_{level}"
+
+    level_heading = soup.find(
+        "h2",
+        id=level_id
     )
 
-    for table in tables:
+    if not level_heading:
+        print(
+            f"⚠️ {class_name}: "
+            f"<h2 id=\"{level_id}\"> not found."
+        )
+        continue
 
-        # ----------------------------------------------------
-        # Determine section heading for this table
-        # ----------------------------------------------------
+    print(
+        f"📖 {class_name}: "
+        f"Found Level {level} section."
+    )
 
-        section_name = ""
+    # ----------------------------------------------------
+    # Collect everything between this H2 and the next H2
+    # ----------------------------------------------------
 
-        previous_heading = table.find_previous(
-            ["h1", "h2", "h3", "h4"]
+    section_elements = []
+
+    current = level_heading.find_next_sibling()
+
+    while current:
+
+        # Stop when we reach the next H2
+        if current.name == "h2":
+            break
+
+        section_elements.append(current)
+
+        current = current.find_next_sibling()
+
+    # ----------------------------------------------------
+    # Look for tables inside this level section
+    # ----------------------------------------------------
+
+    level_tables = []
+
+    for element in section_elements:
+
+        if element.name == "table":
+            level_tables.append(element)
+
+        # Tables may also be nested inside divs
+        level_tables.extend(
+            element.find_all("table")
         )
 
-        if previous_heading:
+    # Remove duplicate table objects
+    unique_tables = []
 
-            section_name = clean_spell_text(
-                previous_heading.get_text(" ", strip=True)
-            )
+    for table in level_tables:
+        if table not in unique_tables:
+            unique_tables.append(table)
 
-        section_lower = section_name.lower()
+    print(
+        f"   Found {len(unique_tables)} table(s) "
+        f"inside Level {level}."
+    )
 
-        # ----------------------------------------------------
-        # Only process tables that appear to contain
-        # spell / ability information.
-        # ----------------------------------------------------
+    # ----------------------------------------------------
+    # Process each table in this level
+    # ----------------------------------------------------
 
-        table_text = clean_spell_text(
-            table.get_text(" ", strip=True)
-        ).lower()
-
-        spell_keywords = [
-            "spell",
-            "ability",
-            "level",
-            "mana",
-            "cast",
-            "duration",
-            "target"
-        ]
-
-        keyword_matches = sum(
-            1
-            for keyword in spell_keywords
-            if keyword in table_text
-        )
-
-        if keyword_matches == 0:
-            continue
-
-        # ----------------------------------------------------
-        # Get rows
-        # ----------------------------------------------------
+    for table in unique_tables:
 
         rows = table.find_all("tr")
 
         if not rows:
             continue
 
-        # ----------------------------------------------------
-        # Find header row
-        # ----------------------------------------------------
+        # ------------------------------------------------
+        # Find the header row
+        # ------------------------------------------------
+
+        headers = []
 
         header_row = None
-        headers = []
 
         for row in rows:
 
@@ -4269,7 +4301,10 @@ async def scrape_class_spells(class_code):
 
             row_headers = [
                 clean_spell_text(
-                    cell.get_text(" ", strip=True)
+                    cell.get_text(
+                        " ",
+                        strip=True
+                    )
                 )
                 for cell in cells
             ]
@@ -4279,116 +4314,117 @@ async def scrape_class_spells(class_code):
             ).lower()
 
             if (
-                "level" in row_lower
-                or "spell" in row_lower
+                "spell" in row_lower
                 or "ability" in row_lower
+                or "name" in row_lower
             ):
-
-                header_row = row
                 headers = row_headers
+                header_row = row
                 break
 
+        # ------------------------------------------------
+        # If no obvious header exists, use the first row
+        # ------------------------------------------------
+
         if not headers:
-            continue
 
-        # ----------------------------------------------------
-        # Identify columns
-        # ----------------------------------------------------
+            cells = rows[0].find_all(
+                ["th", "td"]
+            )
 
-        level_index = find_table_column(
-            headers,
-            [
-                "Level",
-                "Lvl",
-                "Lv"
+            headers = [
+                clean_spell_text(
+                    cell.get_text(
+                        " ",
+                        strip=True
+                    )
+                )
+                for cell in cells
             ]
+
+            header_row = rows[0]
+
+        print(
+            f"   HEADERS: {headers}"
         )
 
-        name_index = find_table_column(
-            headers,
-            [
-                "Spell",
-                "Spell Name",
-                "Ability",
-                "Ability Name",
-                "Name"
-            ]
-        )
+        # ------------------------------------------------
+        # Locate columns
+        # ------------------------------------------------
 
-        description_index = find_table_column(
-            headers,
-            [
-                "Description",
-                "Desc"
-            ]
-        )
+        level_index = None
+        name_index = None
+        type_index = None
+        description_index = None
+        effects_index = None
+        mana_index = None
+        cast_time_index = None
+        duration_index = None
+        target_index = None
 
-        effects_index = find_table_column(
-            headers,
-            [
-                "Effects",
-                "Effect"
-            ]
-        )
+        for index, header in enumerate(headers):
 
-        mana_index = find_table_column(
-            headers,
-            [
-                "Mana",
-                "Mana Cost",
-                "Cost"
-            ]
-        )
+            header_lower = header.lower().strip()
 
-        cast_time_index = find_table_column(
-            headers,
-            [
-                "Cast Time",
-                "Cast"
-            ]
-        )
+            if (
+                level_index is None
+                and header_lower in {
+                    "level",
+                    "lvl"
+                }
+            ):
+                level_index = index
 
-        duration_index = find_table_column(
-            headers,
-            [
-                "Duration"
-            ]
-        )
+            if name_index is None and (
+                "spell" in header_lower
+                or "ability" in header_lower
+                or header_lower == "name"
+            ):
+                name_index = index
 
-        target_index = find_table_column(
-            headers,
-            [
-                "Target"
-            ]
-        )
+            if type_index is None and (
+                "type" in header_lower
+            ):
+                type_index = index
 
-        # ----------------------------------------------------
-        # If there isn't an obvious name column, try the
-        # first non-level column.
-        # ----------------------------------------------------
+            if description_index is None and (
+                "description" in header_lower
+                or header_lower == "desc"
+            ):
+                description_index = index
 
-        if name_index is None:
+            if effects_index is None and (
+                "effect" in header_lower
+            ):
+                effects_index = index
 
-            for index, header in enumerate(headers):
+            if mana_index is None and (
+                "mana" in header_lower
+            ):
+                mana_index = index
 
-                if index == level_index:
-                    continue
+            if cast_time_index is None and (
+                "cast" in header_lower
+            ):
+                cast_time_index = index
 
-                if header.strip():
+            if duration_index is None and (
+                "duration" in header_lower
+            ):
+                duration_index = index
 
-                    name_index = index
-                    break
+            if target_index is None and (
+                "target" in header_lower
+            ):
+                target_index = index
 
-        if name_index is None:
-            continue
-
-        # ----------------------------------------------------
+        # ------------------------------------------------
         # Process data rows
-        # ----------------------------------------------------
+        # ------------------------------------------------
 
         for row in rows:
 
-            if row == header_row:
+            if row is header_row:
                 continue
 
             cells = row.find_all(
@@ -4408,176 +4444,113 @@ async def scrape_class_spells(class_code):
                 for cell in cells
             ]
 
-            # Need at least enough data for a name
-            if name_index >= len(values):
+            if not values:
                 continue
 
-            spell_name = values[name_index].strip()
+            # ------------------------------------------------
+            # Level comes from the H2, not necessarily the
+            # table itself.
+            # ------------------------------------------------
+
+            spell_level = level
+
+            # ------------------------------------------------
+            # Determine spell/ability name
+            # ------------------------------------------------
+
+            if name_index is not None and (
+                name_index < len(values)
+            ):
+                spell_name = values[name_index]
+            else:
+                # If there is no recognizable name column,
+                # use the first useful cell.
+                spell_name = ""
+
+                for value in values:
+                    if value.strip():
+                        spell_name = value
+                        break
 
             if not spell_name:
                 continue
 
             # ------------------------------------------------
-            # Skip obvious header/repeated header rows
+            # Skip obvious non-spell rows
             # ------------------------------------------------
 
-            if spell_name.lower() in (
+            spell_name_lower = spell_name.lower()
+
+            if spell_name_lower in {
                 "spell",
-                "spell name",
                 "ability",
-                "ability name",
-                "name"
-            ):
+                "name",
+                "level"
+            }:
                 continue
 
             # ------------------------------------------------
-            # Determine level
+            # Extract optional fields
             # ------------------------------------------------
 
-            level = None
-
-            if (
-                level_index is not None
-                and level_index < len(values)
-            ):
-
-                level = get_spell_level(
-                    values[level_index]
-                )
-
-            # ------------------------------------------------
-            # If no level column was found, attempt to find
-            # a level from the row itself.
-            # ------------------------------------------------
-
-            if level is None:
-
-                for value in values:
-
-                    possible_level = get_spell_level(
-                        value
-                    )
-
-                    if possible_level is not None:
-
-                        # Only use it if it looks like a
-                        # standalone level.
-                        if re.search(
-                            r"\b(?:level|lvl|lv)\b",
-                            value,
-                            re.IGNORECASE
-                        ):
-
-                            level = possible_level
-                            break
-
-            # ------------------------------------------------
-            # Ignore rows without a usable level.
-            # ------------------------------------------------
-
-            if level is None:
-                continue
-
-            # ------------------------------------------------
-            # Determine spell type
-            # ------------------------------------------------
-
-            spell_type = "Spell"
-
-            if (
-                "ability" in section_lower
-                and "spell" not in section_lower
-            ):
-
-                spell_type = "Ability"
-
-            elif "ability" in table_text:
-
-                spell_type = "Ability"
-
-            # ------------------------------------------------
-            # Pull values
-            # ------------------------------------------------
-
-            def get_value(index):
-
-                if (
-                    index is not None
-                    and index < len(values)
-                ):
-                    return values[index]
-
-                return ""
-
-            description = get_value(
-                description_index
+            spell_type = (
+                values[type_index]
+                if type_index is not None
+                and type_index < len(values)
+                else ""
             )
 
-            effects = get_value(
-                effects_index
+            description = (
+                values[description_index]
+                if description_index is not None
+                and description_index < len(values)
+                else ""
             )
 
-            mana = get_value(
-                mana_index
+            effects = (
+                values[effects_index]
+                if effects_index is not None
+                and effects_index < len(values)
+                else ""
             )
 
-            cast_time = get_value(
-                cast_time_index
+            mana = (
+                values[mana_index]
+                if mana_index is not None
+                and mana_index < len(values)
+                else ""
             )
 
-            duration = get_value(
-                duration_index
+            cast_time = (
+                values[cast_time_index]
+                if cast_time_index is not None
+                and cast_time_index < len(values)
+                else ""
             )
 
-            target = get_value(
-                target_index
+            duration = (
+                values[duration_index]
+                if duration_index is not None
+                and duration_index < len(values)
+                else ""
+            )
+
+            target = (
+                values[target_index]
+                if target_index is not None
+                and target_index < len(values)
+                else ""
             )
 
             # ------------------------------------------------
-            # Build wiki URL
+            # Store record
             # ------------------------------------------------
 
-            spell_link = wiki_url
-
-            # If the spell name is linked on the page,
-            # use the actual spell page URL.
-            name_cell = cells[name_index]
-
-            link = name_cell.find(
-                "a",
-                href=True
-            )
-
-            if link:
-
-                href = link["href"]
-
-                if href.startswith("//"):
-
-                    spell_link = (
-                        "https:" + href
-                    )
-
-                elif href.startswith("/"):
-
-                    spell_link = (
-                        "https://monstersandmemories.miraheze.org"
-                        + href
-                    )
-
-                elif href.startswith("http"):
-
-                    spell_link = href
-
-            # ------------------------------------------------
-            # Save result
-            # ------------------------------------------------
-
-            spells.append({
+            record = {
                 "class_code": class_code,
                 "class_name": class_name,
                 "spell_name": spell_name,
-                "level": level,
+                "level": spell_level,
                 "spell_type": spell_type,
                 "description": description,
                 "effects": effects,
@@ -4585,39 +4558,43 @@ async def scrape_class_spells(class_code):
                 "cast_time": cast_time,
                 "duration": duration,
                 "target": target,
-                "wiki_url": spell_link
-            })
+                "wiki_url": wiki_url
+            }
 
-    # --------------------------------------------------------
-    # Remove duplicates
-    # --------------------------------------------------------
+            records.append(record)
 
-    unique_spells = {}
+            print(
+                f"      ✓ Level {level}: "
+                f"{spell_name}"
+            )
 
-    for spell in spells:
+# --------------------------------------------------------
+# Remove duplicate spells
+# --------------------------------------------------------
 
-        key = (
-            spell["spell_name"].strip().lower(),
-            spell["level"]
-        )
+unique_records = []
 
-        unique_spells[key] = spell
+seen = set()
 
-    spells = list(
-        unique_spells.values()
+for record in records:
+
+    key = (
+        record["spell_name"].strip().lower(),
+        record["level"]
     )
 
-    spells.sort(
-        key=lambda x: (
-            x["level"],
-            x["spell_name"].lower()
-        )
-    )
+    if key in seen:
+        continue
 
-    print(
-        f"✅ Scraped {len(spells)} "
-        f"spells/abilities for {class_name}."
-    )
+    seen.add(key)
+    unique_records.append(record)
+
+records = unique_records
+
+print(
+    f"📚 {class_name}: "
+    f"Found {len(records)} spell/ability records."
+)
 
     return spells
 
