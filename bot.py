@@ -4018,37 +4018,7 @@ def clean_spell_text(text):
 # ========================================================
 # SCRAPE CLASS SPELLS / ABILITIES
 #
-# WIKI STRUCTURE:
-#
-# <div class="mw-heading mw-heading2">
-#     <h2 id="Level_1">Level 1</h2>
-# </div>
-#
-# <table>
-#     Spell Name
-#     Spell Description
-#     Class
-#     Location
-#     Mana
-# </table>
-#
-# <div class="mw-heading mw-heading2">
-#     <h2 id="Level_2">Level 2</h2>
-# </div>
-#
-# <table>
-#     ...
-# </table>
-#
-# ...
-#
-# <h2 id="Level_60">
-#
-# ========================================================
-
-async def scrape_class_spells(
-    class_code
-):
+async def scrape_class_spells(class_code):
 
     class_name = SPELL_CLASS_NAMES.get(
         class_code
@@ -4065,7 +4035,7 @@ async def scrape_class_spells(
 
 
     # ====================================================
-    # BUILD WIKI URL
+    # WIKI URL
     # ====================================================
 
     wiki_url = (
@@ -4082,11 +4052,11 @@ async def scrape_class_spells(
     )
 
     print(
-        f"📚 SPELL SCRAPE STARTING"
+        f"📚 STARTING SPELL SCRAPE"
     )
 
     print(
-        f"Class: {class_name}"
+        f"CLASS: {class_name}"
     )
 
     print(
@@ -4094,7 +4064,7 @@ async def scrape_class_spells(
     )
 
     print(
-        f"{'=' * 70}\n"
+        f"{'=' * 70}"
     )
 
 
@@ -4102,7 +4072,7 @@ async def scrape_class_spells(
 
 
     # ====================================================
-    # AIOHTTP
+    # DOWNLOAD WITH AIOHTTP
     # ====================================================
 
     try:
@@ -4127,7 +4097,7 @@ async def scrape_class_spells(
             ) as response:
 
                 print(
-                    f"🌐 Wiki HTTP status: "
+                    f"🌐 HTTP STATUS: "
                     f"{response.status}"
                 )
 
@@ -4137,14 +4107,18 @@ async def scrape_class_spells(
                     html = await response.text()
 
                     print(
-                        f"✅ Downloaded "
-                        f"{class_name} page."
+                        f"✅ HTML DOWNLOADED"
+                    )
+
+                    print(
+                        f"HTML SIZE: "
+                        f"{len(html):,} characters"
                     )
 
                 else:
 
                     print(
-                        f"⚠️ Wiki returned "
+                        f"❌ Wiki returned "
                         f"HTTP {response.status}"
                     )
 
@@ -4152,8 +4126,7 @@ async def scrape_class_spells(
     except Exception as e:
 
         print(
-            f"⚠️ aiohttp request failed: "
-            f"{e}"
+            f"⚠️ aiohttp failed: {e}"
         )
 
 
@@ -4194,17 +4167,19 @@ async def scrape_class_spells(
 
 
                 print(
-                    f"✅ Downloaded "
-                    f"{class_name} page "
-                    f"with Playwright."
+                    f"✅ Playwright HTML downloaded"
+                )
+
+                print(
+                    f"HTML SIZE: "
+                    f"{len(html):,} characters"
                 )
 
 
         except Exception as e:
 
             print(
-                f"❌ Playwright failed: "
-                f"{e}"
+                f"❌ Playwright failed: {e}"
             )
 
             return []
@@ -4213,8 +4188,7 @@ async def scrape_class_spells(
     if not html:
 
         print(
-            f"❌ No HTML received for "
-            f"{class_name}."
+            f"❌ No HTML received."
         )
 
         return []
@@ -4234,7 +4208,7 @@ async def scrape_class_spells(
 
 
     # ====================================================
-    # LEVEL 1 THROUGH LEVEL 60
+    # FIND LEVELS 1 THROUGH 60
     # ====================================================
 
     for level in range(1, 61):
@@ -4242,9 +4216,18 @@ async def scrape_class_spells(
         level_id = f"Level_{level}"
 
 
-        # ------------------------------------------------
-        # Find the exact H2
-        # ------------------------------------------------
+        print(
+            f"\n----------------------------------------"
+        )
+
+        print(
+            f"🔎 LOOKING FOR {level_id}"
+        )
+
+
+        # =================================================
+        # FIND H2
+        # =================================================
 
         level_heading = soup.find(
             "h2",
@@ -4252,66 +4235,93 @@ async def scrape_class_spells(
         )
 
 
-        if not level_heading:
+        if level_heading is None:
 
             print(
-                f"⚠️ Level {level}: "
-                f"<h2 id=\"{level_id}\"> "
-                f"not found."
+                f"⚠️ {level_id} NOT FOUND"
             )
 
             continue
 
 
         print(
-            f"📖 Found Level {level}"
+            f"✅ FOUND {level_id}"
         )
 
 
         # =================================================
-        # FIND THE HEADING CONTAINER
+        # FIND THE NEXT LEVEL H2
         #
-        # The actual wiki HTML is:
-        #
-        # <div class="mw-heading mw-heading2">
-        #     <h2 id="Level_1">
-        # </div>
-        #
-        # The table comes AFTER this DIV.
+        # This gives us the exact boundary of this level.
         # =================================================
 
-        heading_container = (
-            level_heading.parent
+        next_level_heading = None
+
+
+        current_element = (
+            level_heading.find_next(
+                "h2"
+            )
         )
 
 
-        print(
-            f"   Heading container: "
-            f"{heading_container.name}"
-        )
+        while current_element:
+
+            current_id = (
+                current_element.get(
+                    "id",
+                    ""
+                )
+            )
+
+
+            if current_id.startswith(
+                "Level_"
+            ):
+
+                next_level_heading = (
+                    current_element
+                )
+
+                break
+
+
+            current_element = (
+                current_element.find_next(
+                    "h2"
+                )
+            )
+
+
+        if next_level_heading:
+
+            print(
+                f"   Next level: "
+                f"{next_level_heading.get('id')}"
+            )
+
+        else:
+
+            print(
+                f"   No next level found."
+            )
 
 
         # =================================================
-        # FIND THE TABLE AFTER THE HEADING
-        #
-        # Search forward through the document until:
-        #
-        # 1. We find a table
-        #
-        # OR
-        #
-        # 2. We reach the next Level H2
+        # FIND TABLES AFTER THIS H2
         # =================================================
 
-        spell_table = None
+        tables_after_level = []
 
 
-        current = heading_container
+        current = level_heading
 
 
         while True:
 
-            current = current.find_next_sibling()
+            current = current.find_next(
+                "table"
+            )
 
 
             if current is None:
@@ -4320,28 +4330,127 @@ async def scrape_class_spells(
 
 
             # ---------------------------------------------
-            # Stop if another H2 is encountered
+            # Determine whether this table occurs before
+            # the next Level H2.
             # ---------------------------------------------
 
-            next_h2 = current.find(
-                "h2"
-            )
+            if next_level_heading:
+
+                # Is the next level heading before
+                # this table in the document?
+                next_h2_position = (
+                    next_level_heading.sourceline
+                    if hasattr(
+                        next_level_heading,
+                        "sourceline"
+                    )
+                    else None
+                )
+
+                table_position = (
+                    current.sourceline
+                    if hasattr(
+                        current,
+                        "sourceline"
+                    )
+                    else None
+                )
 
 
-            if current.name == "h2":
+                # -----------------------------------------
+                # BeautifulSoup does not always provide
+                # source line information, so use DOM
+                # relationship instead.
+                # -----------------------------------------
+
+                node = next_level_heading
+
+
+                found_before_next_level = False
+
+
+                for element in node.find_all_previous(
+                    "table"
+                ):
+
+                    if element is current:
+
+                        found_before_next_level = True
+
+                        break
+
+
+                if found_before_next_level:
+
+                    # This table is before the next level
+                    # and belongs to this level.
+
+                    tables_after_level.append(
+                        current
+                    )
+
+                    break
+
+
+                # If this table is after the next level,
+                # stop looking.
+                break
+
+
+            else:
+
+                tables_after_level.append(
+                    current
+                )
 
                 break
 
 
-            if next_h2:
+        # =================================================
+        # FALLBACK TABLE SEARCH
+        #
+        # The DOM method above can be unnecessarily strict.
+        # Since the wiki has one table directly after each
+        # level heading, use the first table encountered
+        # before the next Level H2.
+        # =================================================
 
-                next_h2_id = next_h2.get(
-                    "id",
-                    ""
+        spell_table = None
+
+
+        # -------------------------------------------------
+        # Walk every element between this Level H2 and the
+        # next Level H2.
+        # -------------------------------------------------
+
+        current = level_heading
+
+
+        while True:
+
+            current = current.find_next()
+
+
+            if current is None:
+
+                break
+
+
+            # ---------------------------------------------
+            # Stop at the next Level H2
+            # ---------------------------------------------
+
+            if current.name == "h2":
+
+                current_id = (
+                    current.get(
+                        "id",
+                        ""
+                    )
                 )
 
 
-                if next_h2_id.startswith(
+                if current_id.startswith(
                     "Level_"
                 ):
 
@@ -4349,7 +4458,7 @@ async def scrape_class_spells(
 
 
             # ---------------------------------------------
-            # Is this the spell table?
+            # First table found belongs to this level
             # ---------------------------------------------
 
             if current.name == "table":
@@ -4359,44 +4468,23 @@ async def scrape_class_spells(
                 break
 
 
-            # ---------------------------------------------
-            # Table may be inside a DIV
-            # ---------------------------------------------
-
-            nested_table = current.find(
-                "table"
-            )
-
-
-            if nested_table:
-
-                spell_table = nested_table
-
-                break
-
-
-        # =================================================
-        # NO TABLE FOUND
-        # =================================================
-
-        if not spell_table:
+        if spell_table is None:
 
             print(
-                f"   ⚠️ No spell table found "
-                f"for Level {level}."
+                f"❌ NO TABLE FOUND "
+                f"FOR LEVEL {level}"
             )
 
             continue
 
 
         print(
-            f"   ✅ Spell table found "
-            f"for Level {level}."
+            f"✅ TABLE FOUND FOR LEVEL {level}"
         )
 
 
         # =================================================
-        # GET TABLE ROWS
+        # GET ALL ROWS
         # =================================================
 
         rows = spell_table.find_all(
@@ -4404,18 +4492,23 @@ async def scrape_class_spells(
         )
 
 
-        if not rows:
+        print(
+            f"   Rows found: {len(rows)}"
+        )
+
+
+        if len(rows) <= 1:
 
             print(
-                f"   ⚠️ Level {level} "
-                f"table has no rows."
+                f"⚠️ No data rows "
+                f"for Level {level}"
             )
 
             continue
 
 
         # =================================================
-        # PROCESS TABLE ROWS
+        # PROCESS ROWS
         # =================================================
 
         for row_number, row in enumerate(
@@ -4423,7 +4516,7 @@ async def scrape_class_spells(
         ):
 
             cells = row.find_all(
-                ["td", "th"]
+                "td"
             )
 
 
@@ -4431,6 +4524,10 @@ async def scrape_class_spells(
 
                 continue
 
+
+            # ------------------------------------------------
+            # Extract text from every cell
+            # ------------------------------------------------
 
             values = [
 
@@ -4446,76 +4543,128 @@ async def scrape_class_spells(
 
 
             # ------------------------------------------------
-            # Skip completely empty rows
+            # Skip the header row
             # ------------------------------------------------
 
-            if not any(values):
+            if values:
 
-                continue
+                first_cell = (
+                    values[0]
+                    .lower()
+                    .strip()
+                )
+
+
+                if first_cell == "spell name":
+
+                    print(
+                        f"   Skipping header row"
+                    )
+
+                    continue
 
 
             # =================================================
-            # HEADER ROW
+            # THE WIKI HAS EXACTLY 5 COLUMNS
             #
-            # Spell Name
-            # Spell Description
-            # Class
-            # Location
-            # Mana
+            # 0 = Spell Name
+            # 1 = Spell Description
+            # 2 = Class
+            # 3 = Location
+            # 4 = Mana
             # =================================================
 
-            first_value = (
-                values[0]
-                .lower()
-                .strip()
-                if values
-                else ""
-            )
-
-
-            if first_value in {
-                "spell name",
-                "spell",
-                "ability",
-                "name"
-            }:
-
-                continue
-
-
-            # =================================================
-            # WE NEED AT LEAST 5 COLUMNS
-            # =================================================
-
-            if len(values) < 5:
+            if len(cells) < 5:
 
                 print(
-                    f"   ⚠️ Level {level}, "
+                    f"⚠️ Level {level}, "
                     f"row {row_number}: "
-                    f"Only {len(values)} "
-                    f"columns found."
+                    f"Only {len(cells)} cells"
                 )
 
                 continue
 
 
             # =================================================
-            # EXTRACT WIKI COLUMNS
+            # SPELL NAME
+            #
+            # Prefer the actual <a> link.
             # =================================================
 
-            spell_name = values[0]
+            spell_link = cells[0].find(
+                "a"
+            )
 
-            description = values[1]
 
-            spell_class = values[2]
+            if spell_link:
 
-            location = values[3]
+                spell_name = clean_spell_text(
+                    spell_link.get_text(
+                        " ",
+                        strip=True
+                    )
+                )
 
-            mana = values[4]
+            else:
+
+                spell_name = clean_spell_text(
+                    cells[0].get_text(
+                        " ",
+                        strip=True
+                    )
+                )
 
 
             # =================================================
-            # SKIP EMPTY SPELL NAMES
+            # DESCRIPTION
+            # =================================================
+
+            description = clean_spell_text(
+                cells[1].get_text(
+                    " ",
+                    strip=True
+                )
+            )
+
+
+            # =================================================
+            # CLASS
+            # =================================================
+
+            spell_class = clean_spell_text(
+                cells[2].get_text(
+                    " ",
+                    strip=True
+                )
+            )
+
+
+            # =================================================
+            # LOCATION
+            # =================================================
+
+            location = clean_spell_text(
+                cells[3].get_text(
+                    " ",
+                    strip=True
+                )
+            )
+
+
+            # =================================================
+            # MANA
+            # =================================================
+
+            mana = clean_spell_text(
+                cells[4].get_text(
+                    " ",
+                    strip=True
+                )
+            )
+
+
+            # =================================================
+            # SKIP EMPTY SPELL
             # =================================================
 
             if not spell_name:
@@ -4524,7 +4673,7 @@ async def scrape_class_spells(
 
 
             # =================================================
-            # SAVE RECORD
+            # CREATE RECORD
             # =================================================
 
             record = {
@@ -4564,9 +4713,33 @@ async def scrape_class_spells(
             )
 
 
+            # =================================================
+            # LOG RESULT
+            # =================================================
+
             print(
-                f"      ✓ Level {level}: "
+                f"   ✓ Level {level}: "
                 f"{spell_name}"
+            )
+
+            print(
+                f"      Description: "
+                f"{description[:150]}"
+            )
+
+            print(
+                f"      Class: "
+                f"{spell_class}"
+            )
+
+            print(
+                f"      Location: "
+                f"{location}"
+            )
+
+            print(
+                f"      Mana: "
+                f"{mana}"
             )
 
 
@@ -4615,7 +4788,7 @@ async def scrape_class_spells(
 
 
     # ====================================================
-    # SCRAPE SUMMARY
+    # FINAL RESULTS
     # ====================================================
 
     print(
@@ -4623,7 +4796,7 @@ async def scrape_class_spells(
     )
 
     print(
-        f"📚 SCRAPE COMPLETE"
+        f"📚 SPELL SCRAPE COMPLETE"
     )
 
     print(
@@ -4631,7 +4804,7 @@ async def scrape_class_spells(
     )
 
     print(
-        f"Total records: {len(records)}"
+        f"Records found: {len(records)}"
     )
 
     print(
