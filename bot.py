@@ -5031,6 +5031,7 @@ class SpellsSelectionView(View):
         )
 
 
+
         async def view_callback(
             interaction: Interaction
         ):
