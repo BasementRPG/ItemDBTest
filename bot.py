@@ -1693,7 +1693,7 @@ wiki_cache = {}
 
 async def fetch_wiki_items(slot_name: str):
     """Scrape the Monsters & Memories Wiki for a specific item slot.
-       Uses Playwright first (for JS-rendered pages), falls back to aiohttp if that fails.
+       Uses aiohttp directly to avoid Playwright/Chromium dependency issues.
     """
     base_url = "https://monstersandmemories.miraheze.org"
     category_url = f"{base_url}/wiki/Category:{slot_name}"
@@ -1706,118 +1706,12 @@ async def fetch_wiki_items(slot_name: str):
 
     print(f"🌐 Fetching {category_url} ...")
 
-    # ✅ Ensure Chromium exists
-    chromium_path = "/root/.cache/ms-playwright/chromium-1140/chrome-linux/chrome"
-    if not os.path.exists(chromium_path):
-        print("⚙️ Playwright Chromium not found — installing it...")
-        os.system("python -m playwright install-deps && python -m playwright install chromium")
+    # =========================================================
+    # AIOHTTP WIKI FETCH
+    # Same HTTP method used by the working spell scraper
+    # =========================================================
 
-    # -----------------------------
-    # 🧠 Try Playwright first
-    # -----------------------------
-    try:
-        async with async_playwright() as p:
-
-            browser = await p.chromium.launch(
-                headless=True,
-                args=[
-                    "--no-sandbox",
-                    "--disable-setuid-sandbox",
-                    "--disable-dev-shm-usage",
-                ]
-            )
-
-            page = await browser.new_page(
-                user_agent=(
-                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-                    "AppleWebKit/537.36 (KHTML, like Gecko) "
-                    "Chrome/138.0.0.0 Safari/537.36"
-                ),
-                extra_http_headers={
-                    "Accept": (
-                        "text/html,application/xhtml+xml,"
-                        "application/xml;q=0.9,image/avif,image/webp,"
-                        "*/*;q=0.8"
-                    ),
-                    "Accept-Language": "en-US,en;q=0.9",
-                    "Referer": (
-                        "https://monstersandmemories.miraheze.org/"
-                    ),
-                }
-            )
-
-            response = await page.goto(
-                category_url,
-                wait_until="domcontentloaded",
-                timeout=60000
-            )
-
-            if response:
-                print(
-                    f"🌐 Wiki category HTTP status: "
-                    f"{response.status}"
-                )
-
-            await page.wait_for_timeout(3000)
-
-            html = await page.content()
-
-            print(
-                f"🌐 Wiki category HTML received: "
-                f"{len(html) if html else 0} bytes"
-            )
-
-            print(
-                f"🌐 Wiki page title: "
-                f"{await page.title()}"
-            )
-
-            await browser.close()
-
-        soup = BeautifulSoup(
-            html,
-            "html.parser"
-        )
-
-    except Exception as e:
-        print(f"⚠️ Playwright failed: {e}")
-        print("🔁 Retrying with aiohttp fallback...")
-
-        headers = {
-            "User-Agent": (
-                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-                "AppleWebKit/537.36 (KHTML, like Gecko) "
-                "Chrome/138.0.0.0 Safari/537.36"
-            ),
-            "Accept": (
-                "text/html,application/xhtml+xml,"
-                "application/xml;q=0.9,image/avif,image/webp,"
-                "*/*;q=0.8"
-            ),
-            "Accept-Language": "en-US,en;q=0.9",
-            "Referer": (
-                "https://monstersandmemories.miraheze.org/"
-            ),
-            "Cache-Control": "no-cache",
-            "Pragma": "no-cache",
-        }
-
-        async with aiohttp.ClientSession(
-            headers=headers
-        ) as session:
-            async with session.get(category_url, headers=headers, ssl=False) as resp:
-                if resp.status != 200:
-                    print(f"❌ Fallback request failed ({resp.status})")
-                    return []
-                html = await resp.text()
-
-        soup = BeautifulSoup(html, "html.parser")
-
-    # -----------------------------
-    # 🔎 Parse item links
-    # -----------------------------
-    links = soup.select("div.mw-category a")
-    wiki_headers = {
+    headers = {
         "User-Agent": (
             "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
             "AppleWebKit/537.36 (KHTML, like Gecko) "
@@ -1832,309 +1726,827 @@ async def fetch_wiki_items(slot_name: str):
         "Referer": (
             "https://monstersandmemories.miraheze.org/"
         ),
-        "Cache-Control": "no-cache",
-        "Pragma": "no-cache",
     }
-    async with aiohttp.ClientSession(headers=wiki_headers) as session:
-        for link in links[:25]:
-            item_url = f"{base_url}{link['href']}"
-            item_name = link.text.strip()
 
-            try:
-                async with session.get(item_url, ssl=False) as resp:
-                    if resp.status != 200:
+    timeout = aiohttp.ClientTimeout(
+        total=60
+    )
+
+    # =========================================================
+    # Fetch category page
+    # =========================================================
+
+    try:
+
+        print(
+            f"🌐 [ITEMS] Opening wiki category: "
+            f"{category_url}"
+        )
+
+        async with aiohttp.ClientSession(
+            headers=headers,
+            timeout=timeout
+        ) as session:
+
+            async with session.get(
+                category_url,
+                allow_redirects=True,
+                ssl=False
+            ) as response:
+
+                print(
+                    f"🌐 [ITEMS] aiohttp HTTP status: "
+                    f"{response.status}"
+                )
+
+                html = await response.text(
+                    errors="ignore"
+                )
+
+                print(
+                    f"🌐 [ITEMS] aiohttp HTML received: "
+                    f"{len(html) if html else 0} bytes"
+                )
+
+                if response.status != 200:
+                    print(
+                        f"❌ Wiki category request failed "
+                        f"with HTTP {response.status}"
+                    )
+                    return []
+
+                if not html or len(html) < 1000:
+                    print(
+                        "❌ Wiki category returned insufficient HTML."
+                    )
+                    return []
+
+            soup = BeautifulSoup(
+                html,
+                "html.parser"
+            )
+
+            # -----------------------------
+            # 🔎 Parse item links
+            # -----------------------------
+
+            links = soup.select(
+                "div.mw-category a"
+            )
+
+            print(
+                f"🔎 Found {len(links)} item links "
+                f"in Category:{slot_name}"
+            )
+
+            # =================================================
+            # Fetch individual item pages
+            # =================================================
+
+            for link in links[:25]:
+
+                href = link.get("href")
+
+                if not href:
+                    continue
+
+                if href.startswith("/"):
+                    item_url = f"{base_url}{href}"
+                elif href.startswith("http"):
+                    item_url = href
+                else:
+                    item_url = f"{base_url}/wiki/{href}"
+
+                item_name = link.text.strip()
+
+                try:
+
+                    print(
+                        f"📖 Fetching item: {item_name}"
+                    )
+
+                    async with session.get(
+                        item_url,
+                        allow_redirects=True,
+                        ssl=False
+                    ) as resp:
+
+                        if resp.status != 200:
+                            print(
+                                f"⚠️ Failed to fetch item page "
+                                f"({resp.status}): {item_url}"
+                            )
+                            continue
+
+                        page_html = await resp.text(
+                            errors="ignore"
+                        )
+
+                    if not page_html or len(page_html) < 500:
+                        print(
+                            f"⚠️ Item page returned insufficient HTML: "
+                            f"{item_url}"
+                        )
                         continue
-                    page_html = await resp.text()
 
-                s2 = BeautifulSoup(page_html, "html.parser")
+                    s2 = BeautifulSoup(
+                        page_html,
+                        "html.parser"
+                    )
 
-                # --- Item Name ---
-                title = s2.find("h1", id="firstHeading")
-                item_name = title.text.strip() if title else name
-    
-                # --- Image ---
-                image_url = None
-                img_tag = s2.select_one(".infobox img, .pi-image img, .mainPageInnerBox img")
-                if img_tag:
-                    src = img_tag.get("src", "")
-                    image_url = f"https:{src}" if src.startswith("//") else src
-    
-         
-       
-          
-                # --- Extract NPC and Zone (more tolerant of malformed HTML) ---
-             
-              
-                npc_name, zone_name = "", ""
-                
-                drops_section = s2.find("h2", id="Drops_From")
-                if drops_section:
-                    # The next <p> tag should hold the zone name
-                    zone_tag = drops_section.find_next("p")
-                    if zone_tag:
-                        zone_name = zone_tag.get_text(strip=True)
-                
-                    # Then look for <ul><li> list of NPCs
-                    npc_list = drops_section.find_next("ul")
-                    if npc_list:
-                        npc_links = npc_list.find_all("a")
-                        if npc_links:
-                            npc_name = ", ".join(a.get_text(strip=True) for a in npc_links)
-                        else:
-                            # Fallback: plain text <li>
-                            npc_items = npc_list.find_all("li")
-                            npc_name = ", ".join(li.get_text(strip=True) for li in npc_items)
+                    # --- Item Name ---
+                    title = s2.find(
+                        "h1",
+                        id="firstHeading"
+                    )
 
+                    # Preserve the existing item name behavior,
+                    # but use the category link name as fallback.
+                    item_name = (
+                        title.text.strip()
+                        if title
+                        else item_name
+                    )
 
-              
-                # --- Extract Quest (more tolerant of malformed HTML) ---
-                quest_name = ""
-                
-                drops_section = s2.find("h2", id="Related_quests")
-                if drops_section:        
-                    # Then look for <ul><li> list of Quest
-                    quest_list = drops_section.find_next("ul")
-                    if quest_list:
-                        quest_links = quest_list.find_all("a")
-                        if quest_links:
-                            quest_name = ", ".join(a.get_text(strip=True) for a in quest_links)
-                        else:
-                            # Fallback: plain text <li>
-                            quest_items = quest_list.find_all("li")
-                            quest_name = ", ".join(li.get_text(strip=True) for li in quest_items)            
-    
-               
-                # --- 1️⃣ If npc_name and quest_name are the same, clear npc_name
-                if npc_name.strip().lower() == quest_name.strip().lower() and npc_name:
-                    npc_name = ""                
+                    # --- Image ---
+                    image_url = None
 
+                    img_tag = s2.select_one(
+                        ".infobox img, "
+                        ".pi-image img, "
+                        ".mainPageInnerBox img"
+                    )
 
-                # --- Fetch NPC details ---
-                npc_image = ""
-                npc_level = ""
-                
-                # Only proceed if npc_name exists
-                if npc_name:
-                    for npc in npc_name.split(","):
-                        npc_clean = npc.strip().replace(" ", "_")
-                        npc_url = f"https://monstersandmemories.miraheze.org/wiki/{npc_clean}"
-                
-                        async with session.get(npc_url, headers={"User-Agent": "Mozilla/5.0"}) as npc_resp:
-                            if npc_resp.status != 200:
-                                print(f"⚠️ Failed to fetch NPC page: {npc_url}")
-                                continue
-                
-                            npc_html = await npc_resp.text()
-                            npc_soup = BeautifulSoup(npc_html, "html.parser")
-                
-                            # --- NPC Image (inside <span typeof="mw:File">) ---
-                            file_span = npc_soup.select_one('span[typeof="mw:File"] img')
-                            if file_span:
-                                src = file_span.get("src", "")
-                                npc_image = f"https:{src}" if src.startswith("//") else src
-                
-                            # --- NPC Level (3rd <td> inside mobStatsBox) ---
-                            mob_stats_table = npc_soup.find("table", class_="mobStatsBox")
-                            if mob_stats_table:
-                                tds = mob_stats_table.find_all("td")
-                                if len(tds) >= 3:
-                                    npc_level = tds[2].get_text(strip=True)
-                
-                            # (Optional) Stop after first NPC to avoid multiple fetches
-                            break
-                
-                
-               
-                
-                # --- Extract Crafted  ---
-  
-                crafted_name = ""
-                crafting_recipe = ""  # final formatted block for DB
-                
-                crafted_section = None
-                for pid in ("Player_crafted", "Player_crafter"):
-                    crafted_section = s2.find("h2", id=pid)
-                    if crafted_section:
-                        break
-                
-                if crafted_section:
-                    ul = crafted_section.find_next("ul")
-                    if ul:
-                        li = ul.find("li")
-                        if li:
-                            # --- Crafted name ---
-                            direct_bits = []
-                            for node in li.contents:
-                                if isinstance(node, NavigableString):
-                                    text = str(node).strip()
-                                    if text:
-                                        direct_bits.append(text)
-                                elif getattr(node, "name", None) != "ul":
-                                    text = node.get_text(" ", strip=True)
-                                    if text:
-                                        direct_bits.append(text)
-                
-                            if direct_bits:
-                                crafted_name = " ".join(direct_bits)
+                    if img_tag:
+
+                        src = img_tag.get(
+                            "src",
+                            ""
+                        )
+
+                        image_url = (
+                            f"https:{src}"
+                            if src.startswith("//")
+                            else src
+                        )
+
+                    # -------------------------------------------------
+                    # Extract NPC and Zone
+                    # -------------------------------------------------
+
+                    npc_name = ""
+                    zone_name = ""
+
+                    drops_section = s2.find(
+                        "h2",
+                        id="Drops_From"
+                    )
+
+                    if drops_section:
+
+                        # The next <p> tag should hold the zone name
+                        zone_tag = drops_section.find_next("p")
+
+                        if zone_tag:
+                            zone_name = zone_tag.get_text(
+                                strip=True
+                            )
+
+                        # Then look for <ul><li> list of NPCs
+                        npc_list = drops_section.find_next("ul")
+
+                        if npc_list:
+
+                            npc_links = npc_list.find_all("a")
+
+                            if npc_links:
+
+                                npc_name = ", ".join(
+                                    a.get_text(
+                                        strip=True
+                                    )
+                                    for a in npc_links
+                                )
+
                             else:
-                                nested_ul = li.find("ul")
-                                if nested_ul:
-                                    nested_ul.extract()
-                                crafted_name = li.get_text(" ", strip=True) or ""
-                
-                            # --- Yield & Station ---
-                            wiki_base = "https://monstersandmemories.miraheze.org"
-                            yield_qty = None
-                            station_line = None
-                
-                            inner_ul = li.find("ul")
-                            if inner_ul:
-                                for sub_li in inner_ul.find_all("li", recursive=False):
-                                    text = sub_li.get_text(" ", strip=True)
-                                    if not text:
+
+                                # Fallback: plain text <li>
+                                npc_items = npc_list.find_all("li")
+
+                                npc_name = ", ".join(
+                                    li.get_text(
+                                        strip=True
+                                    )
+                                    for li in npc_items
+                                )
+
+                    # -------------------------------------------------
+                    # Extract Quest
+                    # -------------------------------------------------
+
+                    quest_name = ""
+
+                    drops_section = s2.find(
+                        "h2",
+                        id="Related_quests"
+                    )
+
+                    if drops_section:
+
+                        # Then look for <ul><li> list of Quest
+                        quest_list = drops_section.find_next("ul")
+
+                        if quest_list:
+
+                            quest_links = quest_list.find_all("a")
+
+                            if quest_links:
+
+                                quest_name = ", ".join(
+                                    a.get_text(
+                                        strip=True
+                                    )
+                                    for a in quest_links
+                                )
+
+                            else:
+
+                                # Fallback: plain text <li>
+                                quest_items = quest_list.find_all("li")
+
+                                quest_name = ", ".join(
+                                    li.get_text(
+                                        strip=True
+                                    )
+                                    for li in quest_items
+                                )
+
+                    # -------------------------------------------------
+                    # If NPC and quest are identical, clear NPC
+                    # -------------------------------------------------
+
+                    if (
+                        npc_name.strip().lower()
+                        == quest_name.strip().lower()
+                        and npc_name
+                    ):
+                        npc_name = ""
+
+                    # -------------------------------------------------
+                    # Fetch NPC details
+                    # -------------------------------------------------
+
+                    npc_image = ""
+                    npc_level = ""
+
+                    if npc_name:
+
+                        for npc in npc_name.split(","):
+
+                            npc_clean = (
+                                npc.strip()
+                                .replace(" ", "_")
+                            )
+
+                            npc_url = (
+                                "https://monstersandmemories.miraheze.org/wiki/"
+                                f"{npc_clean}"
+                            )
+
+                            try:
+
+                                async with session.get(
+                                    npc_url,
+                                    allow_redirects=True,
+                                    ssl=False
+                                ) as npc_resp:
+
+                                    if npc_resp.status != 200:
+
+                                        print(
+                                            f"⚠️ Failed to fetch NPC page: "
+                                            f"{npc_url}"
+                                        )
+
                                         continue
-                
-                                    # Yield
-                                    if text.lower().startswith("yield"):
-                                        m = re.search(r"x\s*(\d+)\s*$", text, flags=re.IGNORECASE)
-                                        if m:
-                                            yield_qty = m.group(1)
-                                        else:
-                                            m2 = re.search(r"(\d+)\s*$", text)
-                                            yield_qty = m2.group(1) if m2 else "1"
-                
-                                    # Crafting station link
-                                    if text.lower().startswith("in "):
-                                        a = sub_li.find("a", href=True)
-                                        if a:
-                                            href = a["href"]
-                                            if href.startswith("//"):
-                                                href = "https:" + href
-                                            elif href.startswith("/"):
-                                                href = wiki_base + href
-                                            station_name = a.get_text(" ", strip=True)
-                                            station_line = f"In [{station_name}]({href}):"
-                                        else:
-                                            station_line = text if text.endswith(":") else (text + ":")
-                
-                            # --- Ingredient list (linked, unique, no nesting) ---
-                            recipe_lines = []
-                            dl_block = li.find_next("dl")
-                            if dl_block:
-                                for dd in dl_block.find_all("dd"):
-                                    if dd.find("dl"):
-                                        continue  # skip parents
-                                    dd_text = dd.get_text(" ", strip=True)
-                                    if not dd_text:
-                                        continue
-                
-                                    qty_match = re.match(r"^x\s*(\d+)\s+", dd_text, flags=re.IGNORECASE)
-                                    qty_str = None
-                                    line = ""
-                
-                                    if qty_match:
-                                        qty_str = qty_match.group(1)
-                                        a = dd.find("a", href=True)
-                                        if a:
-                                            ingredient_name = a.get_text(" ", strip=True)
-                                            href = a["href"]
-                                            if href.startswith("//"):
-                                                href = "https:" + href
-                                            elif href.startswith("/"):
-                                                href = wiki_base + href
+
+                                    npc_html = await npc_resp.text(
+                                        errors="ignore"
+                                    )
+
+                                npc_soup = BeautifulSoup(
+                                    npc_html,
+                                    "html.parser"
+                                )
+
+                                # --- NPC Image ---
+                                file_span = npc_soup.select_one(
+                                    'span[typeof="mw:File"] img'
+                                )
+
+                                if file_span:
+
+                                    src = file_span.get(
+                                        "src",
+                                        ""
+                                    )
+
+                                    npc_image = (
+                                        f"https:{src}"
+                                        if src.startswith("//")
+                                        else src
+                                    )
+
+                                # --- NPC Level ---
+                                mob_stats_table = npc_soup.find(
+                                    "table",
+                                    class_="mobStatsBox"
+                                )
+
+                                if mob_stats_table:
+
+                                    tds = mob_stats_table.find_all(
+                                        "td"
+                                    )
+
+                                    if len(tds) >= 3:
+
+                                        npc_level = (
+                                            tds[2].get_text(
+                                                strip=True
+                                            )
+                                        )
+
+                                # Stop after first NPC
+                                break
+
+                            except Exception as npc_error:
+
+                                print(
+                                    f"⚠️ NPC fetch failed "
+                                    f"for {npc_url}: {npc_error}"
+                                )
+
+                                continue
+
+                    # -------------------------------------------------
+                    # Extract Crafted
+                    # -------------------------------------------------
+
+                    crafted_name = ""
+                    crafting_recipe = ""
+
+                    crafted_section = None
+
+                    for pid in (
+                        "Player_crafted",
+                        "Player_crafter"
+                    ):
+
+                        crafted_section = s2.find(
+                            "h2",
+                            id=pid
+                        )
+
+                        if crafted_section:
+                            break
+
+                    if crafted_section:
+
+                        ul = crafted_section.find_next("ul")
+
+                        if ul:
+
+                            li = ul.find("li")
+
+                            if li:
+
+                                # --- Crafted name ---
+                                direct_bits = []
+
+                                for node in li.contents:
+
+                                    if isinstance(
+                                        node,
+                                        NavigableString
+                                    ):
+
+                                        text = str(
+                                            node
+                                        ).strip()
+
+                                        if text:
+                                            direct_bits.append(text)
+
+                                    elif getattr(
+                                        node,
+                                        "name",
+                                        None
+                                    ) != "ul":
+
+                                        text = node.get_text(
+                                            " ",
+                                            strip=True
+                                        )
+
+                                        if text:
+                                            direct_bits.append(text)
+
+                                if direct_bits:
+
+                                    crafted_name = " ".join(
+                                        direct_bits
+                                    )
+
+                                else:
+
+                                    nested_ul = li.find("ul")
+
+                                    if nested_ul:
+                                        nested_ul.extract()
+
+                                    crafted_name = (
+                                        li.get_text(
+                                            " ",
+                                            strip=True
+                                        )
+                                        or ""
+                                    )
+
+                                # --- Yield & Station ---
+                                wiki_base = (
+                                    "https://monstersandmemories.miraheze.org"
+                                )
+
+                                yield_qty = None
+                                station_line = None
+
+                                inner_ul = li.find("ul")
+
+                                if inner_ul:
+
+                                    for sub_li in inner_ul.find_all(
+                                        "li",
+                                        recursive=False
+                                    ):
+
+                                        text = sub_li.get_text(
+                                            " ",
+                                            strip=True
+                                        )
+
+                                        if not text:
+                                            continue
+
+                                        # Yield
+                                        if text.lower().startswith(
+                                            "yield"
+                                        ):
+
+                                            m = re.search(
+                                                r"x\s*(\d+)\s*$",
+                                                text,
+                                                flags=re.IGNORECASE
+                                            )
+
+                                            if m:
+
+                                                yield_qty = m.group(1)
+
                                             else:
-                                                href = href
-                                            # preserve all text after the item name
-                                            tail_text = dd_text[qty_match.end():].replace(ingredient_name, "").strip()
-                                            if tail_text:
-                                                line = f"- x{qty_str} [{ingredient_name}]({href}) {tail_text}"
+
+                                                m2 = re.search(
+                                                    r"(\d+)\s*$",
+                                                    text
+                                                )
+
+                                                yield_qty = (
+                                                    m2.group(1)
+                                                    if m2
+                                                    else "1"
+                                                )
+
+                                        # Crafting station link
+                                        if text.lower().startswith("in "):
+
+                                            a = sub_li.find(
+                                                "a",
+                                                href=True
+                                            )
+
+                                            if a:
+
+                                                href = a["href"]
+
+                                                if href.startswith("//"):
+
+                                                    href = (
+                                                        "https:"
+                                                        + href
+                                                    )
+
+                                                elif href.startswith("/"):
+
+                                                    href = (
+                                                        wiki_base
+                                                        + href
+                                                    )
+
+                                                station_name = a.get_text(
+                                                    " ",
+                                                    strip=True
+                                                )
+
+                                                station_line = (
+                                                    f"In "
+                                                    f"[{station_name}]"
+                                                    f"({href}):"
+                                                )
+
                                             else:
-                                                line = f"- x{qty_str} [{ingredient_name}]({href})"
+
+                                                station_line = (
+                                                    text
+                                                    if text.endswith(":")
+                                                    else text + ":"
+                                                )
+
+                                # --- Ingredient list ---
+                                recipe_lines = []
+
+                                dl_block = li.find_next("dl")
+
+                                if dl_block:
+
+                                    for dd in dl_block.find_all("dd"):
+
+                                        if dd.find("dl"):
+                                            continue
+
+                                        dd_text = dd.get_text(
+                                            " ",
+                                            strip=True
+                                        )
+
+                                        if not dd_text:
+                                            continue
+
+                                        qty_match = re.match(
+                                            r"^x\s*(\d+)\s+",
+                                            dd_text,
+                                            flags=re.IGNORECASE
+                                        )
+
+                                        qty_str = None
+                                        line = ""
+
+                                        if qty_match:
+
+                                            qty_str = (
+                                                qty_match.group(1)
+                                            )
+
+                                            a = dd.find(
+                                                "a",
+                                                href=True
+                                            )
+
+                                            if a:
+
+                                                ingredient_name = (
+                                                    a.get_text(
+                                                        " ",
+                                                        strip=True
+                                                    )
+                                                )
+
+                                                href = a["href"]
+
+                                                if href.startswith("//"):
+
+                                                    href = (
+                                                        "https:"
+                                                        + href
+                                                    )
+
+                                                elif href.startswith("/"):
+
+                                                    href = (
+                                                        wiki_base
+                                                        + href
+                                                    )
+
+                                                tail_text = (
+                                                    dd_text[
+                                                        qty_match.end():
+                                                    ]
+                                                    .replace(
+                                                        ingredient_name,
+                                                        ""
+                                                    )
+                                                    .strip()
+                                                )
+
+                                                if tail_text:
+
+                                                    line = (
+                                                        f"- x{qty_str} "
+                                                        f"[{ingredient_name}]"
+                                                        f"({href}) "
+                                                        f"{tail_text}"
+                                                    )
+
+                                                else:
+
+                                                    line = (
+                                                        f"- x{qty_str} "
+                                                        f"[{ingredient_name}]"
+                                                        f"({href})"
+                                                    )
+
+                                            else:
+
+                                                line = (
+                                                    f"- {dd_text}"
+                                                )
+
                                         else:
-                                            line = f"- {dd_text}"
-                                    else:
-                                        a = dd.find("a", href=True)
-                                        if a:
-                                            ingredient_name = a.get_text(" ", strip=True)
-                                            href = a["href"]
-                                            if href.startswith("//"):
-                                                href = "https:" + href
-                                            elif href.startswith("/"):
-                                                href = wiki_base + href
-                                            line = f"- [{ingredient_name}]({href})"
-                                        else:
-                                            line = f"- {dd_text}"
-                
-                                    recipe_lines.append(line)
-                
-                            # --- Deduplicate cleanly ---
-                            seen = set()
-                            recipe_lines_cleaned = []
-                            for line in recipe_lines:
-                                if line not in seen:
-                                    recipe_lines_cleaned.append(line)
-                                    seen.add(line)
-                
-                            # --- Final save block ---
-                            block_lines = []
-                            if yield_qty is not None:
-                                block_lines.append(f"Yield: {yield_qty}")
-                            if station_line:
-                                block_lines.append(station_line)
-                            if recipe_lines_cleaned:
-                                block_lines.extend(recipe_lines_cleaned)
-                
-                            crafting_recipe = "\n".join(block_lines)
 
+                                            a = dd.find(
+                                                "a",
+                                                href=True
+                                            )
 
+                                            if a:
 
-               
-    
-    
-                
-                # --- Item Stats ---
-                item_stats_div = s2.find("div", class_="item-stats")
-                item_stats = "None listed"
-                if item_stats_div:
-                    lines = [line.strip() for line in item_stats_div.stripped_strings]
-                    item_stats = "\n".join(lines)
-    
-                # --- Description ---
-                desc_tag = s2.select_one("div.mw-parser-output > p")
-                description = desc_tag.text.strip() if desc_tag else "No description available."
-    
-                def clean_case(s):
-                    if not s or s == "Unknown":
-                        return "Unknown"
-                    return " ".join(word.capitalize() for word in s.split())
-    
-                items.append({
-                    "item_name": format_item_name(item_name),
-                    "item_image": image_url,
-                    "npc_name": npc_name,
-                    "zone_name": zone_name,
-                    "slot_name": slot_name,
-                    "item_stats": item_stats,
-                    "wiki_url": item_url,
-                    "description": description,
-                    "quest_name": quest_name,
-                    "crafted_name": crafted_name,
-                    "npc_level": npc_level,
-                    "npc_image": npc_image,
-                    "crafting_recipe": crafting_recipe,
-                    
-                    
-                    "source": "Wiki"
-                })
-                
+                                                ingredient_name = (
+                                                    a.get_text(
+                                                        " ",
+                                                        strip=True
+                                                    )
+                                                )
 
-                await asyncio.sleep(1.0)  # polite delay
+                                                href = a["href"]
 
-            except Exception as e:
-                print(f"⚠️ Failed to parse {item_url}: {e}")
-                continue
+                                                if href.startswith("//"):
+
+                                                    href = (
+                                                        "https:"
+                                                        + href
+                                                    )
+
+                                                elif href.startswith("/"):
+
+                                                    href = (
+                                                        wiki_base
+                                                        + href
+                                                    )
+
+                                                line = (
+                                                    f"- "
+                                                    f"[{ingredient_name}]"
+                                                    f"({href})"
+                                                )
+
+                                            else:
+
+                                                line = (
+                                                    f"- {dd_text}"
+                                                )
+
+                                        recipe_lines.append(line)
+
+                                # --- Deduplicate cleanly ---
+                                seen = set()
+                                recipe_lines_cleaned = []
+
+                                for line in recipe_lines:
+
+                                    if line not in seen:
+
+                                        recipe_lines_cleaned.append(
+                                            line
+                                        )
+
+                                        seen.add(line)
+
+                                # --- Final save block ---
+                                block_lines = []
+
+                                if yield_qty is not None:
+
+                                    block_lines.append(
+                                        f"Yield: {yield_qty}"
+                                    )
+
+                                if station_line:
+
+                                    block_lines.append(
+                                        station_line
+                                    )
+
+                                if recipe_lines_cleaned:
+
+                                    block_lines.extend(
+                                        recipe_lines_cleaned
+                                    )
+
+                                crafting_recipe = "\n".join(
+                                    block_lines
+                                )
+
+                    # -------------------------------------------------
+                    # Item Stats
+                    # -------------------------------------------------
+
+                    item_stats_div = s2.find(
+                        "div",
+                        class_="item-stats"
+                    )
+
+                    item_stats = "None listed"
+
+                    if item_stats_div:
+
+                        lines = [
+                            line.strip()
+                            for line in item_stats_div.stripped_strings
+                        ]
+
+                        item_stats = "\n".join(lines)
+
+                    # -------------------------------------------------
+                    # Description
+                    # -------------------------------------------------
+
+                    desc_tag = s2.select_one(
+                        "div.mw-parser-output > p"
+                    )
+
+                    description = (
+                        desc_tag.text.strip()
+                        if desc_tag
+                        else "No description available."
+                    )
+
+                    # -------------------------------------------------
+                    # Add item
+                    # -------------------------------------------------
+
+                    items.append({
+                        "item_name": format_item_name(
+                            item_name
+                        ),
+                        "item_image": image_url,
+                        "npc_name": npc_name,
+                        "zone_name": zone_name,
+                        "slot_name": slot_name,
+                        "item_stats": item_stats,
+                        "wiki_url": item_url,
+                        "description": description,
+                        "quest_name": quest_name,
+                        "crafted_name": crafted_name,
+                        "npc_level": npc_level,
+                        "npc_image": npc_image,
+                        "crafting_recipe": crafting_recipe,
+                        "source": "Wiki"
+                    })
+
+                    print(
+                        f"✅ Parsed item: {item_name}"
+                    )
+
+                    # ✅ polite delay
+                    await asyncio.sleep(1.0)
+
+                except Exception as e:
+
+                    print(
+                        f"⚠️ Failed to parse "
+                        f"{item_url}: {e}"
+                    )
+
+                    continue
+
+    except Exception as e:
+
+        print(
+            f"❌ Item wiki fetch failed: "
+            f"{type(e).__name__}: {e}"
+        )
+
+        import traceback
+        traceback.print_exc()
+
+        return []
 
     wiki_cache[slot_name] = items
+
+    print(
+        f"✅ Finished Category:{slot_name} — "
+        f"{len(items)} items parsed."
+    )
+
     return items
 
 
