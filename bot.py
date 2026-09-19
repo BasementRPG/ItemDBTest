@@ -949,7 +949,7 @@ async def run_item_db(
     slot: Optional[str],
     stat: Optional[str],
     classes: Optional[str],
-    type_filter:Optional[str] = "all",
+    type_filter:Optional[str] = "with_stats,
     search_query = None,
     source_command="db",
     show_search = True
@@ -1020,7 +1020,7 @@ async def run_item_db(
         # "all" = keep everything
         # "with_stats" = item must contain one of the allowed stats
         
-        tf = (type_filter or "all").lower()
+        tf = (type_filter or "with_stats").lower()
         
         if tf == "with_stats":
         
@@ -2296,7 +2296,7 @@ class WikiSelectView(discord.ui.View):
             view=None
         )
         search_query = self.search_query or ""
-        type_filter = getattr(self, "type_filter", "all")
+        type_filter = getattr(self, "type_filter", "with_stats")
         if self.source_command in ("db", "dbp"):
             search_query = self.search_query or ""  # ✅ MAKE SURE WE PASS THE QUERY
             return await run_item_db(
@@ -2304,7 +2304,7 @@ class WikiSelectView(discord.ui.View):
                 self.slot,
                 self.stat,
                 self.classes,
-                getattr(self, "type_filter", "all"),
+                getattr(self, "type_filter", "with_stats"),
                 search_query,
                 self.source_command,  # source_command param
               
@@ -2320,10 +2320,10 @@ class WikiSelectView(discord.ui.View):
                     await run_wiki_items(interaction, self.slot, self.stat, self.classes)
                     return
                 elif source == "db":
-                    await run_item_db(interaction, self.slot, self.stat, self.classes, search_query, self.type_filter, self.type_filter)
+                    await run_item_db(interaction, self.slot, self.stat, self.classes, getattr(self, "type_filter", "with_stats"), search_query)
                     return
                 elif source == "dbp":
-                    await run_item_db(interaction, self.slot, self.stat, self.classes, search_query, self.type_filter, self.type_filter)
+                    await run_item_db(interaction, self.slot, self.stat, self.classes, getattr(self, "type_filter", "with_stats"), search_query)
                     return
     
             # still no handler? give warning
