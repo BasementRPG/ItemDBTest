@@ -2188,7 +2188,7 @@ class SlotStatClassSelectView(discord.ui.View):
         if getattr(self, "skill_use", None):
             if item_stats:
                 item_stats += "\n"
-            item_stats += f"Skill Use: {self.skill_use}"
+            item_stats += f"Skill: {self.skill_use}"
           
         
         await interaction.response.send_modal(
@@ -5015,31 +5015,31 @@ class WikiSelectView(discord.ui.View):
             self.skill_use_select.options = [
                 discord.SelectOption(
                     label="1H Bludgeoning",
-                    value="1H Bludgeoning"
+                    value="BLG"
                 ),
                 discord.SelectOption(
                     label="2H Bludgeoning",
-                    value="2H Bludgeoning"
+                    value="BLG Two Handed"
                 ),
                 discord.SelectOption(
                     label="1H Piercing",
-                    value="1H Piercing"
+                    value="STA"
                 ),
                 discord.SelectOption(
                     label="2H Piercing",
-                    value="2H Piercing"
+                    value="STA Two Handed"
                 ),
                 discord.SelectOption(
                     label="1H Slashing",
-                    value="1H Slashing"
+                    value="SLA"
                 ),
                 discord.SelectOption(
                     label="2H Slashing",
-                    value="2H Slashing"
+                    value="SLA Two Handed"
                 ),
                 discord.SelectOption(
                     label="Hand to Hand",
-                    value="Hand to Hand"
+                    value="H2H"
                 ),
             ]
 
@@ -5051,19 +5051,19 @@ class WikiSelectView(discord.ui.View):
             self.skill_use_select.options = [
                 discord.SelectOption(
                     label="1H Bludgeoning",
-                    value="1H Bludgeoning"
+                    value="BLG"
                 ),
                 discord.SelectOption(
                     label="1H Piercing",
-                    value="1H Piercing"
+                    value="STA"
                 ),
                 discord.SelectOption(
                     label="1H Slashing",
-                    value="1H Slashing"
+                    value="SLA"
                 ),
                 discord.SelectOption(
                     label="Hand to Hand",
-                    value="Hand to Hand"
+                    value="H2H"
                 ),
             ]
 
@@ -5074,11 +5074,11 @@ class WikiSelectView(discord.ui.View):
 
             self.skill_use_select.options = [
                 discord.SelectOption(
-                    label="Archery",
+                    label="ARC",
                     value="Archery"
                 ),
                 discord.SelectOption(
-                    label="Throwing",
+                    label="THR",
                     value="Throwing"
                 ),
             ]
