@@ -1015,6 +1015,7 @@ async def run_item_db(
         def has_value(val):
             return val is not None and str(val).strip().lower() not in ("", "none", "null")
         
+
         # ✅ Apply item type filter FIRST
         # "all" = keep everything
         # "with_stats" = item must contain one of the allowed stats
@@ -1034,6 +1035,7 @@ async def run_item_db(
                 "WIS",
                 "HP",
                 "Mana",
+                "Haste",
                 "SV",
             ]
         
@@ -1049,56 +1051,64 @@ async def run_item_db(
                 if stats_text.lower() in ("none", "none listed", "null"):
                     return False
         
-                # Check each line in Item_stats
-                for line in stats_text.replace("\r", "\n").split("\n"):
-                    line = line.strip()
+                # Normalize the text so different spacing/newline formats
+                # do not affect the search.
+                stats_text = re.sub(r"\s+", " ", stats_text)
         
-                    if not line:
-                        continue
+                # ---------------------------------------------------------
+                # Look specifically for actual stat names.
+                #
+                # We require the stat name to be followed by a colon,
+                # whitespace, or the end of the string.
+                #
+                # This prevents things such as:
+                #   BACKAC
+                #   Class
+                #   Race
+                #   Weight
+                #   Size
+                # from being treated as stats.
+                # ---------------------------------------------------------
         
-                    # Ignore "None listed"
-                    if line.lower() in ("none", "none listed", "null"):
-                        continue
+                for stat in allowed_stats:
         
-                    # Check the stat name before the colon.
-                    # Example:
-                    #   STR: 5       -> qualifies
-                    #   HP: 100      -> qualifies
-                    #   SV Fire: 10  -> qualifies
-                    #   AC: 10       -> does NOT qualify
-                    #   Classes: FTR -> does NOT qualify
-                    match = re.match(r"^\s*([^:]+)\s*:", line)
+                    if stat == "SV":
+                        # Match things such as:
+                        # SV Fire:
+                        # SV Cold:
+                        # SV Holy:
+                        # SV Poison:
+                        # SV Disease:
+                        # SV Electricity:
+                        # etc.
+                        if re.search(
+                            r"\bSV(?:\s+[A-Za-z]+)?\s*:",
+                            stats_text,
+                            re.IGNORECASE
+                        ):
+                            return True
         
-                    if not match:
-                        continue
-        
-                    stat_name = match.group(1).strip()
-        
-                    # Direct stat match
-                    if stat_name.upper() in {
-                        "AGI",
-                        "CHA",
-                        "DEX",
-                        "INT",
-                        "STA",
-                        "STR",
-                        "WIS",
-                        "HP",
-                    }:
-                        return True
-        
-                    # Mana is case-insensitive
-                    if stat_name.lower() == "mana":
-                        return True
-        
-                    # Any SV stat qualifies:
-                    # SV Cold
-                    # SV Fire
-                    # SV Holy
-                    # SV Poison
-                    # etc.
-                    if stat_name.upper().startswith("SV"):
-                        return True
+                    else:
+                        # Match the exact stat name followed by a colon.
+                        #
+                        # Examples:
+                        # STR: 5      -> TRUE
+                        # HP: 100     -> TRUE
+                        # Mana: 50    -> TRUE
+                        # Haste: 10   -> TRUE
+                        #
+                        # But:
+                        # Classes:    -> FALSE
+                        # Weight:     -> FALSE
+                        # Race:       -> FALSE
+                        # BACKAC:     -> FALSE
+                        # AC:         -> FALSE
+                        if re.search(
+                            rf"(?<![A-Za-z]){re.escape(stat)}\s*:",
+                            stats_text,
+                            re.IGNORECASE
+                        ):
+                            return True
         
                 return False
         
