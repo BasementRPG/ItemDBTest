@@ -202,12 +202,23 @@ class SlotSelect(discord.ui.Select):
 class TypeSelect(discord.ui.Select):
     def __init__(self):
         options = [
-            discord.SelectOption(label="Dropped", value="dropped", default=True),
-            discord.SelectOption(label="Crafted", value="crafted"),
-            discord.SelectOption(label="Quested", value="quested"),
-            discord.SelectOption(label="All", value="all"),
+            discord.SelectOption(
+                label="All",
+                value="all"
+            ),
+            discord.SelectOption(
+                label="With Stats",
+                value="with_stats",
+                default=True
+            ),
         ]
-        super().__init__(placeholder="Select item type", options=options, min_values=1, max_values=1)
+
+        super().__init__(
+            placeholder="Select item type",
+            options=options,
+            min_values=1,
+            max_values=1
+        )
 
     async def callback(self, interaction: discord.Interaction):
         self.view.type_filter = self.values[0]
@@ -938,7 +949,7 @@ async def run_item_db(
     slot: Optional[str],
     stat: Optional[str],
     classes: Optional[str],
-    type_filter:Optional[str] = "dropped",
+    type_filter:Optional[str] = "all",
     search_query = None,
     source_command="db",
     show_search = True
@@ -1004,16 +1015,56 @@ async def run_item_db(
         def has_value(val):
             return val is not None and str(val).strip().lower() not in ("", "none", "null")
         
-        # ✅ apply type filter **FIRST**
-        tf = (type_filter or "dropped").lower()
-        
-        if tf == "dropped":
-            db_rows = [r for r in db_rows if has_value(r["npc_name"])]
-        elif tf == "crafted":
-            db_rows = [r for r in db_rows if has_value(r["crafted_name"])]
-        elif tf == "quested":
-            db_rows = [r for r in db_rows if has_value(r["quest_name"])]
+        # ✅ Apply item type filter FIRST
         # "all" = keep everything
+        # "with_stats" = item must have at least one stat other than AC
+
+        tf = (type_filter or "all").lower()
+
+        if tf == "with_stats":
+
+            def has_non_ac_stat(item_stats):
+                if not item_stats:
+                    return False
+
+                stats_text = str(item_stats).strip()
+
+                if not stats_text:
+                    return False
+
+                if stats_text.lower() in ("none", "none listed", "null"):
+                    return False
+
+                # Check each line individually.
+                # We only want actual stat entries and ignore AC.
+                for line in stats_text.replace("\r", "\n").split("\n"):
+                    line = line.strip()
+
+                    if not line:
+                        continue
+
+                    # Ignore "None listed"
+                    if line.lower() in ("none", "none listed", "null"):
+                        continue
+
+                    # Ignore AC
+                    if re.match(r"^\s*AC\s*:", line, re.IGNORECASE):
+                        continue
+
+                    # Ignore Classes because Classes are not item stats
+                    if re.match(r"^\s*Classes?\s*:", line, re.IGNORECASE):
+                        continue
+
+                    # Anything else is considered another stat
+                    return True
+
+                return False
+
+            db_rows = [
+                r for r in db_rows
+                if has_non_ac_stat(r["item_stats"])
+            ]
+
 
       
                 # --- Stat filtering (with special handling for Haste / Spell Haste) ---
@@ -2193,7 +2244,7 @@ class WikiSelectView(discord.ui.View):
             view=None
         )
         search_query = self.search_query or ""
-        type_filter = getattr(self, "type_filter", "dropped")
+        type_filter = getattr(self, "type_filter", "all")
         if self.source_command in ("db", "dbp"):
             search_query = self.search_query or ""  # ✅ MAKE SURE WE PASS THE QUERY
             return await run_item_db(
@@ -2201,7 +2252,7 @@ class WikiSelectView(discord.ui.View):
                 self.slot,
                 self.stat,
                 self.classes,
-                getattr(self, "type_filter", "dropped"),
+                getattr(self, "type_filter", "all"),
                 search_query,
                 self.source_command,  # source_command param
               
