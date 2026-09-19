@@ -4276,13 +4276,26 @@ async def scrape_class_spells(class_code: str):
     # Find the Class Abilities heading
     # ---------------------------------------------------------
 
-    abilities_heading = soup.find(
-        "h1",
-        id=f"{class_name}_Abilities"
-    )
-
+    abilities_heading = None
+    
+    heading_ids = [
+        f"{class_name}_Abilities",
+        f"{class_name}_Spells",
+        f"{class_name}_Spells_&_Abilities",
+    ]
+    
+    for heading_id in heading_ids:
+    
+        abilities_heading = soup.find(
+            "h1",
+            id=heading_id
+        )
+    
+        if abilities_heading:
+            break
+    
     if not abilities_heading:
-
+    
         abilities_heading = soup.find(
             lambda tag:
                 tag.name == "h1"
@@ -4290,7 +4303,11 @@ async def scrape_class_spells(class_code: str):
                     " ",
                     strip=True
                 ).lower()
-                == f"{class_name.lower()} abilities"
+                in [
+                    f"{class_name.lower()} abilities",
+                    f"{class_name.lower()} spells",
+                    f"{class_name.lower()} spells & abilities",
+                ]
         )
 
     if not abilities_heading:
