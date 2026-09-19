@@ -5126,14 +5126,14 @@ class SpellsSelectionView(View):
                 interaction: Interaction
             ):
 
-            if not self.selected_class:
-
-                await interaction.response.send_message(
-                    "Please select a class first.",
-                    ephemeral=True
-                )
-
-                return
+              if not self.selected_class:
+  
+                  await interaction.response.send_message(
+                      "Please select a class first.",
+                      ephemeral=True
+                  )
+  
+                  return
 
             await interaction.response.defer(
                 ephemeral=True
