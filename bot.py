@@ -1030,15 +1030,14 @@ async def run_item_db(
             )
             params.append(slot)
 
-        # --------------------------------------------------------
+
+    # --------------------------------------------------------
     # Skill Use filtering
     # --------------------------------------------------------
 
     if skill_use and slot:
 
         slot_lower = str(slot).strip().lower()
-
-        # Normalize the skill name selected from the dropdown.
         skill_lower = str(skill_use).strip().lower()
 
         # --------------------------------------------------------
@@ -1046,248 +1045,158 @@ async def run_item_db(
         # --------------------------------------------------------
         if slot_lower == "primary":
 
+            # 1H Bludgeoning
             if skill_lower == "1h bludgeoning":
+
                 where_clauses.append(
                     """
-                    (
-                        (
-                            item_stats ILIKE $%d
-                            OR item_stats ILIKE $%d
-                        )
-                        AND
-                        (
-                            item_stats ILIKE $%d
-                            OR item_stats ILIKE $%d
-                            OR item_stats ILIKE $%d
-                        )
-                        AND item_stats NOT ILIKE $%d
-                    )
+                    item_stats ILIKE $%d
+                    AND item_stats ILIKE $%d
+                    AND item_stats NOT ILIKE $%d
                     """
                     % (
                         len(params) + 1,
                         len(params) + 2,
-                        len(params) + 3,
-                        len(params) + 4,
-                        len(params) + 5,
-                        len(params) + 6
+                        len(params) + 3
                     )
                 )
 
                 params.extend([
                     "%Primary%",
-                    "%Primary 1H%",
-                    "%BLG%",
-                    "%Bludgeoning%",
-                    "%1H Bludgeoning%",
+                    "%Skill: BLG%",
                     "%Two Handed%"
                 ])
 
+            # 2H Bludgeoning
             elif skill_lower == "2h bludgeoning":
+
                 where_clauses.append(
                     """
-                    (
-                        (
-                            item_stats ILIKE $%d
-                            OR item_stats ILIKE $%d
-                            OR item_stats ILIKE $%d
-                        )
-                        AND
-                        (
-                            item_stats ILIKE $%d
-                            OR item_stats ILIKE $%d
-                            OR item_stats ILIKE $%d
-                        )
-                    )
+                    item_stats ILIKE $%d
+                    AND item_stats ILIKE $%d
+                    AND item_stats ILIKE $%d
                     """
                     % (
                         len(params) + 1,
                         len(params) + 2,
-                        len(params) + 3,
-                        len(params) + 4,
-                        len(params) + 5,
-                        len(params) + 6
+                        len(params) + 3
                     )
                 )
 
                 params.extend([
-                    "%Primary Two Handed%",
-                    "%Primary 2H%",
-                    "%2H Bludgeoning%",
-                    "%BLG%",
-                    "%Bludgeoning%",
+                    "%Primary%",
+                    "%Skill: BLG%",
                     "%Two Handed%"
                 ])
 
+            # 1H Piercing
             elif skill_lower == "1h piercing":
+
                 where_clauses.append(
                     """
-                    (
-                        (
-                            item_stats ILIKE $%d
-                            OR item_stats ILIKE $%d
-                        )
-                        AND
-                        (
-                            item_stats ILIKE $%d
-                            OR item_stats ILIKE $%d
-                            OR item_stats ILIKE $%d
-                        )
-                        AND item_stats NOT ILIKE $%d
-                    )
+                    item_stats ILIKE $%d
+                    AND item_stats ILIKE $%d
+                    AND item_stats NOT ILIKE $%d
                     """
                     % (
                         len(params) + 1,
                         len(params) + 2,
-                        len(params) + 3,
-                        len(params) + 4,
-                        len(params) + 5,
-                        len(params) + 6
+                        len(params) + 3
                     )
                 )
 
                 params.extend([
                     "%Primary%",
-                    "%Primary 1H%",
-                    "%STA%",
-                    "%Piercing%",
-                    "%1H Piercing%",
+                    "%Skill: STA%",
                     "%Two Handed%"
                 ])
 
+            # 2H Piercing
             elif skill_lower == "2h piercing":
+
                 where_clauses.append(
                     """
-                    (
-                        (
-                            item_stats ILIKE $%d
-                            OR item_stats ILIKE $%d
-                            OR item_stats ILIKE $%d
-                        )
-                        AND
-                        (
-                            item_stats ILIKE $%d
-                            OR item_stats ILIKE $%d
-                            OR item_stats ILIKE $%d
-                        )
-                    )
+                    item_stats ILIKE $%d
+                    AND item_stats ILIKE $%d
+                    AND item_stats ILIKE $%d
                     """
                     % (
                         len(params) + 1,
                         len(params) + 2,
-                        len(params) + 3,
-                        len(params) + 4,
-                        len(params) + 5,
-                        len(params) + 6
+                        len(params) + 3
                     )
                 )
 
                 params.extend([
-                    "%Primary Two Handed%",
-                    "%Primary 2H%",
-                    "%2H Piercing%",
-                    "%STA%",
-                    "%Piercing%",
+                    "%Primary%",
+                    "%Skill: STA%",
                     "%Two Handed%"
                 ])
 
+            # 1H Slashing
             elif skill_lower == "1h slashing":
+
                 where_clauses.append(
                     """
-                    (
-                        (
-                            item_stats ILIKE $%d
-                            OR item_stats ILIKE $%d
-                        )
-                        AND
-                        (
-                            item_stats ILIKE $%d
-                            OR item_stats ILIKE $%d
-                            OR item_stats ILIKE $%d
-                        )
-                        AND item_stats NOT ILIKE $%d
-                    )
+                    item_stats ILIKE $%d
+                    AND item_stats ILIKE $%d
+                    AND item_stats NOT ILIKE $%d
                     """
                     % (
                         len(params) + 1,
                         len(params) + 2,
-                        len(params) + 3,
-                        len(params) + 4,
-                        len(params) + 5,
-                        len(params) + 6
+                        len(params) + 3
                     )
                 )
 
                 params.extend([
                     "%Primary%",
-                    "%Primary 1H%",
-                    "%SLA%",
-                    "%Slashing%",
-                    "%1H Slashing%",
+                    "%Skill: SLA%",
                     "%Two Handed%"
                 ])
 
+            # 2H Slashing
             elif skill_lower == "2h slashing":
+
                 where_clauses.append(
                     """
-                    (
-                        (
-                            item_stats ILIKE $%d
-                            OR item_stats ILIKE $%d
-                            OR item_stats ILIKE $%d
-                        )
-                        AND
-                        (
-                            item_stats ILIKE $%d
-                            OR item_stats ILIKE $%d
-                            OR item_stats ILIKE $%d
-                        )
-                    )
+                    item_stats ILIKE $%d
+                    AND item_stats ILIKE $%d
+                    AND item_stats ILIKE $%d
                     """
                     % (
                         len(params) + 1,
                         len(params) + 2,
-                        len(params) + 3,
-                        len(params) + 4,
-                        len(params) + 5,
-                        len(params) + 6
-                    )
-                )
-
-                params.extend([
-                    "%Primary Two Handed%",
-                    "%Primary 2H%",
-                    "%2H Slashing%",
-                    "%SLA%",
-                    "%Slashing%",
-                    "%Two Handed%"
-                ])
-
-            elif skill_lower == "hand to hand":
-                where_clauses.append(
-                    """
-                    (
-                        (
-                            item_stats ILIKE $%d
-                            OR item_stats ILIKE $%d
-                        )
-                        AND
-                        (
-                            item_stats ILIKE $%d
-                            OR item_stats ILIKE $%d
-                        )
-                    )
-                    """
-                    % (
-                        len(params) + 1,
-                        len(params) + 2,
-                        len(params) + 3,
-                        len(params) + 4
+                        len(params) + 3
                     )
                 )
 
                 params.extend([
                     "%Primary%",
-                    "%Primary 1H%",
+                    "%Skill: SLA%",
+                    "%Two Handed%"
+                ])
+
+            # Hand to Hand
+            elif skill_lower == "hand to hand":
+
+                where_clauses.append(
+                    """
+                    item_stats ILIKE $%d
+                    AND (
+                        item_stats ILIKE $%d
+                        OR item_stats ILIKE $%d
+                    )
+                    """
+                    % (
+                        len(params) + 1,
+                        len(params) + 2,
+                        len(params) + 3
+                    )
+                )
+
+                params.extend([
+                    "%Primary%",
                     "%Hand to Hand%",
                     "%H2H%"
                 ])
@@ -1297,140 +1206,92 @@ async def run_item_db(
         # --------------------------------------------------------
         elif slot_lower == "secondary":
 
+            # 1H Bludgeoning
             if skill_lower == "1h bludgeoning":
+
                 where_clauses.append(
                     """
-                    (
-                        (
-                            item_stats ILIKE $%d
-                            OR item_stats ILIKE $%d
-                        )
-                        AND
-                        (
-                            item_stats ILIKE $%d
-                            OR item_stats ILIKE $%d
-                            OR item_stats ILIKE $%d
-                        )
-                        AND item_stats NOT ILIKE $%d
-                    )
+                    item_stats ILIKE $%d
+                    AND item_stats ILIKE $%d
+                    AND item_stats NOT ILIKE $%d
                     """
                     % (
                         len(params) + 1,
                         len(params) + 2,
-                        len(params) + 3,
-                        len(params) + 4,
-                        len(params) + 5,
-                        len(params) + 6
+                        len(params) + 3
                     )
                 )
 
                 params.extend([
                     "%Secondary%",
-                    "%Secondary 1H%",
-                    "%BLG%",
-                    "%Bludgeoning%",
-                    "%1H Bludgeoning%",
+                    "%Skill: BLG%",
                     "%Two Handed%"
                 ])
 
+            # 1H Piercing
             elif skill_lower == "1h piercing":
+
                 where_clauses.append(
                     """
-                    (
-                        (
-                            item_stats ILIKE $%d
-                            OR item_stats ILIKE $%d
-                        )
-                        AND
-                        (
-                            item_stats ILIKE $%d
-                            OR item_stats ILIKE $%d
-                            OR item_stats ILIKE $%d
-                        )
-                        AND item_stats NOT ILIKE $%d
-                    )
+                    item_stats ILIKE $%d
+                    AND item_stats ILIKE $%d
+                    AND item_stats NOT ILIKE $%d
                     """
                     % (
                         len(params) + 1,
                         len(params) + 2,
-                        len(params) + 3,
-                        len(params) + 4,
-                        len(params) + 5,
-                        len(params) + 6
+                        len(params) + 3
                     )
                 )
 
                 params.extend([
                     "%Secondary%",
-                    "%Secondary 1H%",
-                    "%STA%",
-                    "%Piercing%",
-                    "%1H Piercing%",
+                    "%Skill: STA%",
                     "%Two Handed%"
                 ])
 
+            # 1H Slashing
             elif skill_lower == "1h slashing":
+
                 where_clauses.append(
                     """
-                    (
-                        (
-                            item_stats ILIKE $%d
-                            OR item_stats ILIKE $%d
-                        )
-                        AND
-                        (
-                            item_stats ILIKE $%d
-                            OR item_stats ILIKE $%d
-                            OR item_stats ILIKE $%d
-                        )
-                        AND item_stats NOT ILIKE $%d
-                    )
+                    item_stats ILIKE $%d
+                    AND item_stats ILIKE $%d
+                    AND item_stats NOT ILIKE $%d
                     """
                     % (
                         len(params) + 1,
                         len(params) + 2,
-                        len(params) + 3,
-                        len(params) + 4,
-                        len(params) + 5,
-                        len(params) + 6
+                        len(params) + 3
                     )
                 )
 
                 params.extend([
                     "%Secondary%",
-                    "%Secondary 1H%",
-                    "%SLA%",
-                    "%Slashing%",
-                    "%1H Slashing%",
+                    "%Skill: SLA%",
                     "%Two Handed%"
                 ])
 
+            # Hand to Hand
             elif skill_lower == "hand to hand":
+
                 where_clauses.append(
                     """
-                    (
-                        (
-                            item_stats ILIKE $%d
-                            OR item_stats ILIKE $%d
-                        )
-                        AND
-                        (
-                            item_stats ILIKE $%d
-                            OR item_stats ILIKE $%d
-                        )
+                    item_stats ILIKE $%d
+                    AND (
+                        item_stats ILIKE $%d
+                        OR item_stats ILIKE $%d
                     )
                     """
                     % (
                         len(params) + 1,
                         len(params) + 2,
-                        len(params) + 3,
-                        len(params) + 4
+                        len(params) + 3
                     )
                 )
 
                 params.extend([
                     "%Secondary%",
-                    "%Secondary 1H%",
                     "%Hand to Hand%",
                     "%H2H%"
                 ])
@@ -1440,67 +1301,52 @@ async def run_item_db(
         # --------------------------------------------------------
         elif slot_lower == "range":
 
+            # Archery
             if skill_lower == "archery":
+
                 where_clauses.append(
                     """
-                    (
-                        (
-                            item_stats ILIKE $%d
-                            OR item_stats ILIKE $%d
-                        )
-                        AND
-                        (
-                            item_stats ILIKE $%d
-                            OR item_stats ILIKE $%d
-                        )
+                    item_stats ILIKE $%d
+                    AND (
+                        item_stats ILIKE $%d
+                        OR item_stats ILIKE $%d
                     )
                     """
                     % (
                         len(params) + 1,
                         len(params) + 2,
-                        len(params) + 3,
-                        len(params) + 4
+                        len(params) + 3
                     )
                 )
 
                 params.extend([
                     "%Range%",
-                    "%Ranged%",
                     "%Archery%",
-                    "%Bow%"
+                    "%Skill: ARC%"
                 ])
 
+            # Throwing
             elif skill_lower == "throwing":
+
                 where_clauses.append(
                     """
-                    (
-                        (
-                            item_stats ILIKE $%d
-                            OR item_stats ILIKE $%d
-                        )
-                        AND
-                        (
-                            item_stats ILIKE $%d
-                            OR item_stats ILIKE $%d
-                            OR item_stats ILIKE $%d
-                        )
+                    item_stats ILIKE $%d
+                    AND (
+                        item_stats ILIKE $%d
+                        OR item_stats ILIKE $%d
                     )
                     """
                     % (
                         len(params) + 1,
                         len(params) + 2,
-                        len(params) + 3,
-                        len(params) + 4,
-                        len(params) + 5
+                        len(params) + 3
                     )
                 )
 
                 params.extend([
                     "%Range%",
-                    "%Ranged%",
                     "%Throwing%",
-                    "%Thrown%",
-                    "%Throw%"
+                    "%Skill: THR%"
                 ])
               
 
