@@ -383,6 +383,777 @@ class ItemNameStartView(discord.ui.View):
         self.stop()
 
 
+
+
+async def fetch_wiki_item_data(item_name):
+    """
+    Fetch and parse Wiki information for a single item.
+
+    Returns:
+        dict with Wiki item information
+        or None if the Wiki page cannot be processed.
+    """
+
+    base_url = "https://monstersandmemories.miraheze.org/wiki"
+    wiki_base = "https://monstersandmemories.miraheze.org"
+
+    item_url = f"{base_url}/{item_name.replace(' ', '_')}"
+
+    try:
+        headers = {
+            "User-Agent": "Mozilla/5.0"
+        }
+
+        async with aiohttp.ClientSession(headers=headers) as session:
+
+            async with session.get(
+                item_url,
+                ssl=False,
+                timeout=aiohttp.ClientTimeout(total=20)
+            ) as resp:
+
+                if resp.status != 200:
+                    print(
+                        f"⚠️ Wiki returned HTTP {resp.status} "
+                        f"for {item_name}"
+                    )
+                    return None
+
+                html = await resp.text()
+
+            soup = BeautifulSoup(
+                html,
+                "html.parser"
+            )
+
+            # ---------------------------------------------------------
+            # Confirm this is actually the requested Wiki page.
+            # ---------------------------------------------------------
+
+            actual_title = ""
+
+            heading = soup.find(
+                "h1",
+                id="firstHeading"
+            )
+
+            if heading:
+                actual_title = heading.get_text(
+                    strip=True
+                )
+
+            if not actual_title:
+
+                title_tag = soup.find("title")
+
+                if title_tag:
+                    actual_title = title_tag.get_text(
+                        strip=True
+                    )
+
+                    actual_title = actual_title.split(
+                        " - Monsters and Memories Wiki"
+                    )[0].strip()
+
+            if actual_title.lower() != item_name.lower():
+                return None
+
+            # ---------------------------------------------------------
+            # Drop Information
+            # ---------------------------------------------------------
+
+            npc_name = ""
+            zone_name = ""
+
+            drops_section = soup.find(
+                "h2",
+                id="Drops_From"
+            )
+
+            if drops_section:
+
+                zone_tag = drops_section.find_next("p")
+
+                if zone_tag:
+                    zone_name = zone_tag.get_text(
+                        strip=True
+                    )
+
+                npc_list = drops_section.find_next("ul")
+
+                if npc_list:
+
+                    npc_links = npc_list.find_all("a")
+
+                    if npc_links:
+                        npc_name = ", ".join(
+                            a.get_text(strip=True)
+                            for a in npc_links
+                        )
+                    else:
+                        npc_name = ", ".join(
+                            li.get_text(strip=True)
+                            for li in npc_list.find_all("li")
+                        )
+
+            # ---------------------------------------------------------
+            # Related Quests
+            # ---------------------------------------------------------
+
+            quest_name = ""
+
+            quest_section = soup.find(
+                "h2",
+                id="Related_quests"
+            )
+
+            if quest_section:
+
+                quest_list = quest_section.find_next("ul")
+
+                if quest_list:
+
+                    quest_links = quest_list.find_all("a")
+
+                    if quest_links:
+                        quest_name = ", ".join(
+                            a.get_text(strip=True)
+                            for a in quest_links
+                        )
+                    else:
+                        quest_name = ", ".join(
+                            li.get_text(strip=True)
+                            for li in quest_list.find_all("li")
+                        )
+
+            # If the Wiki incorrectly reports the quest as the NPC,
+            # preserve the same cleanup used by run_update_db().
+            if npc_name.strip().lower() == quest_name.strip().lower():
+                npc_name = ""
+
+            # ---------------------------------------------------------
+            # NPC Details
+            # ---------------------------------------------------------
+
+            npc_image = ""
+            npc_level = ""
+
+            if npc_name:
+
+                first_npc = (
+                    npc_name
+                    .split(",")[0]
+                    .strip()
+                    .replace(" ", "_")
+                )
+
+                npc_url = (
+                    f"{wiki_base}/wiki/{first_npc}"
+                )
+
+                try:
+
+                    async with session.get(
+                        npc_url,
+                        ssl=False,
+                        timeout=aiohttp.ClientTimeout(total=20)
+                    ) as npc_resp:
+
+                        if npc_resp.status == 200:
+
+                            npc_html = await npc_resp.text()
+
+                            npc_soup = BeautifulSoup(
+                                npc_html,
+                                "html.parser"
+                            )
+
+                            file_span = npc_soup.select_one(
+                                'span[typeof="mw:File"] img'
+                            )
+
+                            if file_span:
+
+                                src = file_span.get(
+                                    "src",
+                                    ""
+                                )
+
+                                npc_image = (
+                                    f"https:{src}"
+                                    if src.startswith("//")
+                                    else src
+                                )
+
+                            mob_stats = npc_soup.find(
+                                "table",
+                                class_="mobStatsBox"
+                            )
+
+                            if mob_stats:
+
+                                tds = mob_stats.find_all("td")
+
+                                if len(tds) >= 3:
+                                    npc_level = tds[2].get_text(
+                                        strip=True
+                                    )
+
+                except Exception as e:
+                    print(
+                        f"⚠️ Failed NPC fetch "
+                        f"{npc_url}: {e}"
+                    )
+
+            # ---------------------------------------------------------
+            # Crafted Item
+            # ---------------------------------------------------------
+
+            crafted_name = ""
+            crafting_recipe = ""
+
+            crafted_section = None
+
+            for pid in (
+                "Player_crafted",
+                "Player_crafter"
+            ):
+
+                crafted_section = soup.find(
+                    "h2",
+                    id=pid
+                )
+
+                if crafted_section:
+                    break
+
+            if crafted_section:
+
+                ul = crafted_section.find_next("ul")
+
+                if ul:
+
+                    li = ul.find("li")
+
+                    if li:
+
+                        direct_bits = []
+
+                        for node in li.contents:
+
+                            if isinstance(
+                                node,
+                                NavigableString
+                            ):
+
+                                text = str(node).strip()
+
+                                if text:
+                                    direct_bits.append(text)
+
+                            elif getattr(
+                                node,
+                                "name",
+                                None
+                            ) != "ul":
+
+                                text = node.get_text(
+                                    " ",
+                                    strip=True
+                                )
+
+                                if text:
+                                    direct_bits.append(text)
+
+                        if direct_bits:
+
+                            crafted_name = " ".join(
+                                direct_bits
+                            )
+
+                        else:
+
+                            nested_ul = li.find("ul")
+
+                            if nested_ul:
+                                nested_ul.extract()
+
+                            crafted_name = (
+                                li.get_text(
+                                    " ",
+                                    strip=True
+                                )
+                                or ""
+                            )
+
+                        yield_qty = None
+                        station_line = None
+
+                        inner_ul = li.find("ul")
+
+                        if inner_ul:
+
+                            for sub_li in inner_ul.find_all(
+                                "li",
+                                recursive=False
+                            ):
+
+                                text = sub_li.get_text(
+                                    " ",
+                                    strip=True
+                                )
+
+                                if not text:
+                                    continue
+
+                                if text.lower().startswith(
+                                    "yield"
+                                ):
+
+                                    match = re.search(
+                                        r"x\s*(\d+)\s*$",
+                                        text,
+                                        flags=re.IGNORECASE
+                                    )
+
+                                    if match:
+                                        yield_qty = match.group(1)
+                                    else:
+                                        match2 = re.search(
+                                            r"(\d+)\s*$",
+                                            text
+                                        )
+
+                                        yield_qty = (
+                                            match2.group(1)
+                                            if match2
+                                            else "1"
+                                        )
+
+                                if text.lower().startswith("in "):
+
+                                    a = sub_li.find(
+                                        "a",
+                                        href=True
+                                    )
+
+                                    if a:
+
+                                        href = a["href"]
+
+                                        if href.startswith("//"):
+                                            href = "https:" + href
+
+                                        elif href.startswith("/"):
+                                            href = wiki_base + href
+
+                                        station_name = a.get_text(
+                                            " ",
+                                            strip=True
+                                        )
+
+                                        station_line = (
+                                            f"In [{station_name}]"
+                                            f"({href}):"
+                                        )
+
+                                    else:
+
+                                        station_line = (
+                                            text
+                                            if text.endswith(":")
+                                            else text + ":"
+                                        )
+
+                        recipe_lines = []
+
+                        dl_block = li.find_next("dl")
+
+                        if dl_block:
+
+                            for dd in dl_block.find_all("dd"):
+
+                                if dd.find("dl"):
+                                    continue
+
+                                dd_text = dd.get_text(
+                                    " ",
+                                    strip=True
+                                )
+
+                                if not dd_text:
+                                    continue
+
+                                qty_match = re.match(
+                                    r"^x\s*(\d+)\s+",
+                                    dd_text,
+                                    flags=re.IGNORECASE
+                                )
+
+                                if qty_match:
+
+                                    qty_str = qty_match.group(1)
+
+                                    a = dd.find(
+                                        "a",
+                                        href=True
+                                    )
+
+                                    if a:
+
+                                        ingredient_name = (
+                                            a.get_text(
+                                                " ",
+                                                strip=True
+                                            )
+                                        )
+
+                                        href = a["href"]
+
+                                        if href.startswith("//"):
+                                            href = (
+                                                "https:"
+                                                + href
+                                            )
+
+                                        elif href.startswith("/"):
+                                            href = (
+                                                wiki_base
+                                                + href
+                                            )
+
+                                        tail_text = (
+                                            dd_text[
+                                                qty_match.end():
+                                            ]
+                                            .replace(
+                                                ingredient_name,
+                                                ""
+                                            )
+                                            .strip()
+                                        )
+
+                                        if tail_text:
+
+                                            line = (
+                                                f"- x{qty_str} "
+                                                f"[{ingredient_name}]"
+                                                f"({href}) "
+                                                f"{tail_text}"
+                                            )
+
+                                        else:
+
+                                            line = (
+                                                f"- x{qty_str} "
+                                                f"[{ingredient_name}]"
+                                                f"({href})"
+                                            )
+
+                                    else:
+
+                                        line = f"- {dd_text}"
+
+                                else:
+
+                                    a = dd.find(
+                                        "a",
+                                        href=True
+                                    )
+
+                                    if a:
+
+                                        ingredient_name = (
+                                            a.get_text(
+                                                " ",
+                                                strip=True
+                                            )
+                                        )
+
+                                        href = a["href"]
+
+                                        if href.startswith("//"):
+                                            href = (
+                                                "https:"
+                                                + href
+                                            )
+
+                                        elif href.startswith("/"):
+                                            href = (
+                                                wiki_base
+                                                + href
+                                            )
+
+                                        line = (
+                                            f"- [{ingredient_name}]"
+                                            f"({href})"
+                                        )
+
+                                    else:
+
+                                        line = f"- {dd_text}"
+
+                                recipe_lines.append(line)
+
+                        # Deduplicate recipe lines.
+                        seen = set()
+                        clean_recipe_lines = []
+
+                        for line in recipe_lines:
+
+                            if line not in seen:
+
+                                clean_recipe_lines.append(line)
+                                seen.add(line)
+
+                        block_lines = []
+
+                        if yield_qty is not None:
+                            block_lines.append(
+                                f"Yield: {yield_qty}"
+                            )
+
+                        if station_line:
+                            block_lines.append(
+                                station_line
+                            )
+
+                        block_lines.extend(
+                            clean_recipe_lines
+                        )
+
+                        crafting_recipe = "\n".join(
+                            block_lines
+                        )
+
+            # ---------------------------------------------------------
+            # Item Stats
+            # ---------------------------------------------------------
+
+            item_stats = "None listed"
+
+            item_stats_div = soup.find(
+                "div",
+                class_="item-stats"
+            )
+
+            if item_stats_div:
+
+                lines = [
+                    line.strip()
+                    for line in item_stats_div.stripped_strings
+                ]
+
+                item_stats = "\n".join(lines)
+
+            # ---------------------------------------------------------
+            # Same zone/NPC cleanup as existing updater
+            # ---------------------------------------------------------
+
+            if any(
+                char.isdigit()
+                for char in zone_name
+            ):
+
+                npc_name, zone_name = (
+                    zone_name,
+                    ""
+                )
+
+            return {
+                "item_name": item_name,
+                "zone_name": zone_name,
+                "zone_area": "",
+                "npc_name": npc_name,
+                "npc_level": npc_level,
+                "npc_image": npc_image,
+                "item_stats": item_stats,
+                "quest_name": quest_name,
+                "crafted_name": crafted_name,
+                "crafting_recipe": crafting_recipe
+            }
+
+    except Exception as e:
+
+        print(
+            f"❌ Failed to gather Wiki data "
+            f"for '{item_name}': {e}"
+        )
+
+        return None
+
+
+class WikiFoundDataView(discord.ui.View):
+    def __init__(
+        self,
+        item_name,
+        wiki_data,
+        db_pool,
+        guild_id,
+        added_by,
+        item_image_attachment,
+        npc_image_attachment
+    ):
+        super().__init__(timeout=900)
+
+        self.item_name = item_name
+        self.wiki_data = wiki_data
+        self.db_pool = db_pool
+        self.guild_id = guild_id
+        self.added_by = added_by
+
+        self.item_image_attachment = item_image_attachment
+        self.npc_image_attachment = npc_image_attachment
+
+    async def _continue_to_manual_flow(
+        self,
+        interaction: discord.Interaction,
+        use_wiki_data=False
+    ):
+        """
+        Continue into the existing Slot/Class/Stat workflow.
+
+        If use_wiki_data=True, the Wiki information is carried forward
+        to the ItemDatabaseModal.
+
+        If False, the Wiki information is completely ignored.
+        """
+
+        try:
+            # ---------------------------------------------------------
+            # Upload images now.
+            # We intentionally wait until the user chooses how to proceed.
+            # ---------------------------------------------------------
+
+            guild = interaction.guild
+
+            upload_channel = await ensure_upload_channel1(guild)
+
+            item_msg = await upload_channel.send(
+                file=await self.item_image_attachment.to_file(),
+                content=f"📦 Uploaded item image by {interaction.user.mention}"
+            )
+
+            npc_msg = None
+
+            if self.npc_image_attachment:
+                npc_msg = await upload_channel.send(
+                    file=await self.npc_image_attachment.to_file(),
+                    content=f"👹 Uploaded NPC image by {interaction.user.mention}"
+                )
+
+            item_url = item_msg.attachments[0].url
+            npc_url = npc_msg.attachments[0].url if npc_msg else ""
+
+            item_msg_id = item_msg.id
+            npc_msg_id = npc_msg.id if npc_msg else None
+
+            # ---------------------------------------------------------
+            # Create the existing Slot / Class / Stat view
+            # ---------------------------------------------------------
+
+            view = SlotStatClassSelectView(
+                db_pool=self.db_pool,
+                guild_id=self.guild_id,
+                added_by=self.added_by,
+                item_image_url=item_url,
+                npc_image_url=npc_url if npc_msg else None,
+                item_msg_id=item_msg_id,
+                npc_msg_id=npc_msg_id if npc_msg else None,
+                upload_channel_id=upload_channel.id
+            )
+
+            # Preserve the item name that was already checked.
+            view.item_name_from_check = self.item_name
+
+            # If Wiki data was selected, carry it forward.
+            if use_wiki_data:
+                view.wiki_data = self.wiki_data
+            else:
+                # Explicitly make sure no Wiki data is used.
+                view.wiki_data = None
+
+            # ---------------------------------------------------------
+            # Replace the review screen with the normal entry workflow
+            # ---------------------------------------------------------
+
+            await interaction.response.edit_message(
+                content=(
+                    "Select the **Slot**, **Classes**, and **Stats** "
+                    "for this item:"
+                ),
+                embed=None,
+                view=view
+            )
+
+            view.origin_message = await interaction.original_response()
+
+            self.stop()
+
+        except discord.Forbidden:
+            await interaction.response.edit_message(
+                content="❌ I don't have permission to upload files here.",
+                embed=None,
+                view=None
+            )
+
+        except Exception as e:
+            print(f"❌ Failed to continue item workflow: {e}")
+
+            await interaction.response.edit_message(
+                content=f"❌ Failed to continue item entry: {e}",
+                embed=None,
+                view=None
+            )
+
+    @discord.ui.button(
+        label="📖 Use Found Data",
+        style=discord.ButtonStyle.success
+    )
+    async def use_found_data(
+        self,
+        interaction: discord.Interaction,
+        button: discord.ui.Button
+    ):
+        await self._continue_to_manual_flow(
+            interaction,
+            use_wiki_data=True
+        )
+
+    @discord.ui.button(
+        label="✏️ Manually Enter",
+        style=discord.ButtonStyle.primary
+    )
+    async def manually_enter(
+        self,
+        interaction: discord.Interaction,
+        button: discord.ui.Button
+    ):
+        # IMPORTANT:
+        # This completely ignores the Wiki information.
+        await self._continue_to_manual_flow(
+            interaction,
+            use_wiki_data=False
+        )
+
+    @discord.ui.button(
+        label="❌ Cancel",
+        style=discord.ButtonStyle.danger
+    )
+    async def cancel(
+        self,
+        interaction: discord.Interaction,
+        button: discord.ui.Button
+    ):
+        await interaction.response.edit_message(
+            content="❌ Item entry cancelled.",
+            embed=None,
+            view=None
+        )
+
+        self.stop()
+
+
 # ============================================================
 # Item Name Check Modal
 # ============================================================
@@ -591,21 +1362,158 @@ class ItemNameCheckModal(discord.ui.Modal, title="Add Item to Database"):
         # ============================================================
 
         if wiki_found:
-
+        
+            # ---------------------------------------------------------
+            # Wiki item found.
+            # Gather the actual information before showing the
+            # user the choices.
+            # ---------------------------------------------------------
+        
             await interaction.response.send_message(
                 (
                     f"📖 **{item_name}** was found on the Wiki.\n\n"
-                    f"[Open Wiki Page]({wiki_url})\n\n"
-                    "The Wiki information will be shown for review next."
+                    "🔎 Gathering item information..."
                 ),
                 ephemeral=True
             )
-
-            # --------------------------------------------------------
-            # NEXT STEP:
-            # Build the Wiki review screen here.
-            # --------------------------------------------------------
-
+        
+            wiki_data = await fetch_wiki_item_data(item_name)
+        
+            if not wiki_data:
+        
+                # If the page disappeared or could not be parsed,
+                # fall back to the normal manual workflow.
+                try:
+        
+                    (
+                        upload_channel,
+                        item_msg,
+                        npc_msg,
+                        item_url,
+                        npc_url,
+                        item_msg_id,
+                        npc_msg_id
+                    ) = await self._upload_images(interaction)
+        
+                    view = SlotStatClassSelectView(
+                        db_pool=self.db_pool,
+                        guild_id=self.guild_id,
+                        added_by=self.added_by,
+                        item_image_url=item_url,
+                        npc_image_url=npc_url if npc_msg else None,
+                        item_msg_id=item_msg_id,
+                        npc_msg_id=npc_msg_id if npc_msg else None,
+                        upload_channel_id=upload_channel.id
+                    )
+        
+                    view.item_name_from_check = item_name
+                    view.wiki_data = None
+        
+                    await interaction.edit_original_response(
+                        content=(
+                            f"⚠️ **{item_name}** was found on the Wiki, "
+                            "but I couldn't gather its information.\n\n"
+                            "Continue with the manual item entry:"
+                        ),
+                        view=view
+                    )
+        
+                    view.origin_message = (
+                        await interaction.original_response()
+                    )
+        
+                except Exception as e:
+        
+                    print(
+                        f"❌ Manual fallback failed: {e}"
+                    )
+        
+                    await interaction.followup.send(
+                        f"❌ Could not continue item entry: {e}",
+                        ephemeral=True
+                    )
+        
+                return
+        
+            # ---------------------------------------------------------
+            # Build Wiki review embed
+            # ---------------------------------------------------------
+        
+            review_embed = discord.Embed(
+                title=f"📖 Wiki Data Found: {item_name}",
+                description=(
+                    "The following information was gathered from the Wiki.\n\n"
+                    "Choose how you want to continue."
+                ),
+                color=discord.Color.blurple()
+            )
+        
+            if wiki_data["zone_name"]:
+                review_embed.add_field(
+                    name="🗺️ Zone",
+                    value=wiki_data["zone_name"][:1024],
+                    inline=True
+                )
+        
+            if wiki_data["npc_name"]:
+                review_embed.add_field(
+                    name="👹 NPC",
+                    value=wiki_data["npc_name"][:1024],
+                    inline=True
+                )
+        
+            if wiki_data["npc_level"]:
+                review_embed.add_field(
+                    name="📊 NPC Level",
+                    value=wiki_data["npc_level"][:1024],
+                    inline=True
+                )
+        
+            if wiki_data["item_stats"]:
+                review_embed.add_field(
+                    name="⚔️ Item Stats",
+                    value=wiki_data["item_stats"][:1024],
+                    inline=False
+                )
+        
+            if wiki_data["quest_name"]:
+                review_embed.add_field(
+                    name="🧩 Related Quest",
+                    value=wiki_data["quest_name"][:1024],
+                    inline=False
+                )
+        
+            if wiki_data["crafted_name"]:
+                review_embed.add_field(
+                    name="⚒️ Crafted Item",
+                    value=wiki_data["crafted_name"][:1024],
+                    inline=False
+                )
+        
+            if wiki_data["crafting_recipe"]:
+                review_embed.add_field(
+                    name="📜 Crafting Recipe",
+                    value=wiki_data["crafting_recipe"][:1024],
+                    inline=False
+                )
+        
+            review_view = WikiFoundDataView(
+                item_name=item_name,
+                wiki_data=wiki_data,
+                db_pool=self.db_pool,
+                guild_id=self.guild_id,
+                added_by=self.added_by,
+                item_image_attachment=self.item_image_attachment,
+                npc_image_attachment=self.npc_image_attachment
+            )
+        
+            # Replace the "Gathering..." message with the review screen.
+            await interaction.edit_original_response(
+                content=None,
+                embed=review_embed,
+                view=review_view
+            )
+        
             return
 
         # ============================================================
