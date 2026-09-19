@@ -2914,7 +2914,7 @@ class WikiSelectView(discord.ui.View):
                 discord.SelectOption(label="SV Holy", value="SV Holy"),
                 discord.SelectOption(label="SV Magic", value="SV Magic"),
                 discord.SelectOption(label="SV Poison", value="SV Poison"),
-                discrod.SelectOption(label="Instrument", value="Instrument"),
+                discord.SelectOption(label="Instrument", value="Instrument"),
                 
               
             ]
