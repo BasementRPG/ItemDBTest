@@ -34,9 +34,8 @@ UPLOAD_CHANNEL_ID = 1432472242029334600
 
 RACE_OPTIONS = ["DDF","DEF","DGN","DWF","ELF","GNM","GOB","HFL","HIE","HUM","ORG","TRL"]
 CLASS_OPTIONS = ["ARC", "BRD", "BST", "CLR", "DRU", "ELE", "ENC", "FTR", "INQ", "MNK", "NEC", "PAL", "RNG", "ROG", "SHD", "SHM", "SPB", "WIZ"]
-ITEM_SLOTS = ["Ammo","Back","Bag","Chest","Ear","Face","Feet","Finger","Hands","Head","Legs","Neck","Primary","Range","Secondary","Shirt","Shoulders","Waist","Wrist",
-              "1H Bludgeoning","2H Bludgeoning","1H Piercing","2H Piercing","1H Slashing","2H Slashing"]
-ITEM_STATS = ["AGI","CHA","DEX","INT","STA","STR","WIS","HP","Mana","Hp Regeneration","Mana Regeneration","Haste","Ranged Haste","Spell Haste","SV Cold","SV Corruption","SV Disease","SV Electricity","SV Fire","SV Holy","SV Magic","SV Poison"]
+ITEM_SLOTS = ["Ammo","Back","Bag","Chest","Ear","Face","Feet","Finger","Hands","Head","Legs","Neck","Primary","Range","Secondary","Shirt","Shoulders","Waist","Wrist"]
+ITEM_STATS = ["AGI","CHA","DEX","INT","STA","STR","WIS","HP","Mana","Hp Regeneration","Mana Regeneration","Haste","Ranged Haste","Spell Haste","SV Cold","SV Corruption","SV Disease","SV Electricity","SV Fire","SV Holy","SV Magic","SV Poison","Instrument"]
 
 intents = discord.Intents.default()
 intents.message_content = True
@@ -176,27 +175,142 @@ class SlotSelect(discord.ui.Select):
             max_values=len(options)
         )
 
+
     async def callback(self, interaction: discord.Interaction):
         try:
             print(f"DEBUG: SlotSelect callback - values: {self.values}")
-            # ✅ Store as a list of slots instead of single string
-            self.parent_view.slot = self.values  
-            
+    
+            # Store selected slots
+            self.parent_view.slot = self.values
+    
             # Keep selections highlighted
             for opt in self.options:
                 opt.default = (opt.value in self.values)
-            
-            await interaction.response.edit_message(view=self.parent_view)
+    
+            # Update Skill Use dropdown
+            if hasattr(self.parent_view, "skill_use_select"):
+                self.parent_view.skill_use_select.update_options()
+    
+            await interaction.response.edit_message(
+                view=self.parent_view
+            )
+    
         except Exception as e:
             print(f"ERROR in SlotSelect callback: {e}")
             import traceback
             traceback.print_exc()
+    
             try:
-                await interaction.response.send_message(f"Error: {str(e)}", ephemeral=True)
+                await interaction.response.send_message(
+                    f"Error: {str(e)}",
+                    ephemeral=True
+                )
             except:
                 pass
               
- 
+
+class SkillUseSelect(discord.ui.Select):
+    def __init__(self, parent_view):
+        self.parent_view = parent_view
+
+        super().__init__(
+            placeholder="⚔️ Skill Use (select Primary, Secondary, or Range first)...",
+            options=[
+                discord.SelectOption(
+                    label="Select a Slot first",
+                    value="disabled"
+                )
+            ],
+            min_values=0,
+            max_values=1,
+            disabled=True
+        )
+
+    def update_options(self):
+        selected_slots = self.parent_view.slot or []
+
+        # Reset current Skill Use whenever Slot changes
+        self.parent_view.skill_use = None
+
+        if len(selected_slots) != 1:
+            self.options = [
+                discord.SelectOption(
+                    label="Select one Slot first",
+                    value="disabled"
+                )
+            ]
+            self.disabled = True
+            self.placeholder = "⚔️ Skill Use (select one Slot first)..."
+            return
+
+        selected_slot = selected_slots[0]
+
+        if selected_slot == "Primary":
+            options = [
+                "1H Bludgeoning",
+                "2H Bludgeoning",
+                "1H Piercing",
+                "2H Piercing",
+                "1H Slashing",
+                "2H Slashing",
+                "Hand to Hand"
+            ]
+
+        elif selected_slot == "Secondary":
+            options = [
+                "1H Bludgeoning",
+                "1H Piercing",
+                "1H Slashing",
+                "Hand to Hand"
+            ]
+
+        elif selected_slot == "Range":
+            options = [
+                "Archery",
+                "Throwing"
+            ]
+
+        else:
+            self.options = [
+                discord.SelectOption(
+                    label="No Skill Use for this Slot",
+                    value="disabled"
+                )
+            ]
+            self.disabled = True
+            self.placeholder = "⚔️ Skill Use unavailable for this Slot..."
+            return
+
+        self.options = [
+            discord.SelectOption(
+                label=skill,
+                value=skill,
+                default=(skill == self.parent_view.skill_use)
+            )
+            for skill in options
+        ]
+
+        self.disabled = False
+        self.placeholder = "⚔️ Select Skill Use..."
+
+    async def callback(self, interaction: discord.Interaction):
+        if not self.values or self.values[0] == "disabled":
+            self.parent_view.skill_use = None
+        else:
+            self.parent_view.skill_use = self.values[0]
+
+        for option in self.options:
+            option.default = (
+                option.value == self.parent_view.skill_use
+            )
+
+        await interaction.response.edit_message(
+            view=self.parent_view
+        )
+
+
+
+
 class TypeSelect(discord.ui.Select):
     def __init__(self):
         options = [
@@ -1379,7 +1493,7 @@ class WikiFoundDataView(discord.ui.View):
                 npc_image_url=npc_url if npc_msg else None,
                 item_msg_id=item_msg.id,
                 npc_msg_id=npc_msg.id if npc_msg else None,
-                upload_channel_id=upload_channel.id
+                upload_channel.id
             )
 
             # IMPORTANT:
@@ -1442,7 +1556,7 @@ class ItemNameCheckModal(discord.ui.Modal, title="Add Item to Database"):
         added_by,
         item_image,
         npc_image,
-        upload_channel_id=None
+        None
     ):
         super().__init__(timeout=900)
 
@@ -1679,7 +1793,7 @@ class ItemNameCheckModal(discord.ui.Modal, title="Add Item to Database"):
                         npc_image_url=npc_url if npc_msg else None,
                         item_msg_id=item_msg_id,
                         npc_msg_id=npc_msg_id if npc_msg else None,
-                        upload_channel_id=upload_channel.id
+                        upload_channel.id
                     )
         
                     view.item_name_from_check = item_name
@@ -1886,13 +2000,20 @@ class SlotStatClassSelectView(discord.ui.View):
         self.npc_msg_id = npc_msg_id
         self.upload_channel_id = upload_channel_id
 
+        
         self.slot = None
+        self.skill_use = None
         self.usable_classes = []
         self.all_stats = []
-
+        
         self._finalized = False
         
         self.add_item(SlotSelect(self))
+        
+        # Skill Use dropdown
+        self.skill_use_select = SkillUseSelect(self)
+        self.add_item(self.skill_use_select)
+        
         self.add_item(ClassesSelect(self))
         self.add_item(StatSelect(self))
 
@@ -1933,13 +2054,24 @@ class SlotStatClassSelectView(discord.ui.View):
             return
 
         item_slot = ", ".join(self.slot)
+        
         item_stats = ""
         
         # Combine classes + stats
         if self.usable_classes:
             item_stats += f"Classes: {', '.join(self.usable_classes)}"
+        
         if hasattr(self, "all_stats") and self.all_stats:
-            item_stats += f"\nStats: {', '.join(self.all_stats)}"
+            if item_stats:
+                item_stats += "\n"
+            item_stats += f"Stats: {', '.join(self.all_stats)}"
+        
+        # Add Skill Use
+        if getattr(self, "skill_use", None):
+            if item_stats:
+                item_stats += "\n"
+            item_stats += f"Skill Use: {self.skill_use}"
+          
         
         await interaction.response.send_modal(
             ItemDatabaseModal(
@@ -1953,7 +2085,9 @@ class SlotStatClassSelectView(discord.ui.View):
                 npc_msg_id=self.npc_msg_id,
                 item_stats=item_stats,
                 upload_channel_id=self.upload_channel_id,
-                origin_message=self.origin_message
+                origin_message=self.origin_message,
+                wiki_data=getattr(self, "wiki_data", None),
+                item_name_default=getattr(self, "item_name_from_check", "")
                
             )
         )
@@ -1968,8 +2102,24 @@ class SlotStatClassSelectView(discord.ui.View):
 
 
 class ItemDatabaseModal(discord.ui.Modal, title="Add Item to Database"):
-    def __init__(self, db_pool, guild_id, added_by, item_image_url=None, npc_image_url=None, item_msg_id=None, npc_msg_id=None, item_stats=None, item_slot=None, upload_channel_id=None, origin_message=None):
-
+    def __init__(
+        self,
+        db_pool,
+        guild_id,
+        added_by,
+        item_image_url=None,
+        npc_image_url=None,
+        item_msg_id=None,
+        npc_msg_id=None,
+        item_stats=None,
+        item_slot=None,
+        upload_channel_id=None,
+        origin_message=None,
+        wiki_data=None,
+        item_name_default=None
+    ):
+          
+      
         super().__init__(timeout=None)
         self.db_pool = db_pool
         self.guild_id = guild_id
@@ -1982,18 +2132,49 @@ class ItemDatabaseModal(discord.ui.Modal, title="Add Item to Database"):
         self.item_slot = item_slot
         self.upload_channel_id = upload_channel_id
         self.origin_message = origin_message
+        self.wiki_data = wiki_data or {}
+
+        self.item_name_default = (
+            item_name_default
+            or self.wiki_data.get("item_name", "")
+        )
+        
+        self.wiki_zone_name = self.wiki_data.get("zone_name", "")
+        self.wiki_zone_area = self.wiki_data.get("zone_area", "")
+        self.wiki_npc_name = self.wiki_data.get("npc_name", "")
+        self.wiki_npc_level = self.wiki_data.get("npc_level", "")
 
         # Fields
-        self.item_name = discord.ui.TextInput(label="Item Name", placeholder="Example: Flowing Black Silk Sash")
+        zone_default = self.wiki_zone_name
+
+        if self.wiki_zone_area:
+            zone_default = f"{zone_default} - {self.wiki_zone_area}"
+        
+        self.item_name = discord.ui.TextInput(
+            label="Item Name",
+            placeholder="Example: Flowing Black Silk Sash",
+            default=self.item_name_default[:100],
+            required=True
+        )
+        
         self.zone_field = discord.ui.TextInput(
             label="Zone Name - Zone Area (Optional)",
-            placeholder="Eamples: Shaded Dunes - Ashira Camp", required=False,
+            placeholder="Examples: Shaded Dunes - Ashira Camp",
+            default=zone_default[:4000],
+            required=False,
         )
-        self.npc_name = discord.ui.TextInput(label="NPC Name", placeholder="Example: Fippy Darkpaw", required=False)
-
+        
+        self.npc_name = discord.ui.TextInput(
+            label="NPC Name",
+            placeholder="Example: Fippy Darkpaw",
+            default=self.wiki_npc_name[:4000],
+            required=False
+        )
+        
         self.npc_level = discord.ui.TextInput(
             label="NPC Level",
             placeholder="Example: 15-17 (Estimate/Optional)",
+            default=self.wiki_npc_level[:4000],
             required=False
         )
         
