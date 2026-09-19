@@ -2749,7 +2749,7 @@ class WikiSelectView(discord.ui.View):
 
         await interaction.response.edit_message(view=self)
 
-      async def select_skill_use(self, interaction: discord.Interaction):
+    async def select_skill_use(self, interaction: discord.Interaction):
         self.skill_use = (
             self.skill_use_select.values[0]
             if self.skill_use_select.values
