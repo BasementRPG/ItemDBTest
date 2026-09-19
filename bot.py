@@ -1076,7 +1076,7 @@ async def run_item_db(
                 params.extend([
                     "%Primary%",
                     "%Primary 1H%",
-                    "%BLD%",
+                    "%BLG%",
                     "%Bludgeoning%",
                     "%1H Bludgeoning%",
                     "%Two Handed%"
@@ -1113,7 +1113,7 @@ async def run_item_db(
                     "%Primary Two Handed%",
                     "%Primary 2H%",
                     "%2H Bludgeoning%",
-                    "%BLD%",
+                    "%BLG%",
                     "%Bludgeoning%",
                     "%Two Handed%"
                 ])
@@ -1148,7 +1148,7 @@ async def run_item_db(
                 params.extend([
                     "%Primary%",
                     "%Primary 1H%",
-                    "%PRC%",
+                    "%STA%",
                     "%Piercing%",
                     "%1H Piercing%",
                     "%Two Handed%"
@@ -1185,7 +1185,7 @@ async def run_item_db(
                     "%Primary Two Handed%",
                     "%Primary 2H%",
                     "%2H Piercing%",
-                    "%PRC%",
+                    "%STA%",
                     "%Piercing%",
                     "%Two Handed%"
                 ])
@@ -1220,7 +1220,7 @@ async def run_item_db(
                 params.extend([
                     "%Primary%",
                     "%Primary 1H%",
-                    "%SLH%",
+                    "%SLA%",
                     "%Slashing%",
                     "%1H Slashing%",
                     "%Two Handed%"
@@ -1257,7 +1257,7 @@ async def run_item_db(
                     "%Primary Two Handed%",
                     "%Primary 2H%",
                     "%2H Slashing%",
-                    "%SLH%",
+                    "%SLA%",
                     "%Slashing%",
                     "%Two Handed%"
                 ])
@@ -1327,7 +1327,7 @@ async def run_item_db(
                 params.extend([
                     "%Secondary%",
                     "%Secondary 1H%",
-                    "%BLD%",
+                    "%BLG%",
                     "%Bludgeoning%",
                     "%1H Bludgeoning%",
                     "%Two Handed%"
@@ -1363,7 +1363,7 @@ async def run_item_db(
                 params.extend([
                     "%Secondary%",
                     "%Secondary 1H%",
-                    "%PRC%",
+                    "%STA%",
                     "%Piercing%",
                     "%1H Piercing%",
                     "%Two Handed%"
@@ -1399,7 +1399,7 @@ async def run_item_db(
                 params.extend([
                     "%Secondary%",
                     "%Secondary 1H%",
-                    "%SLH%",
+                    "%SLA%",
                     "%Slashing%",
                     "%1H Slashing%",
                     "%Two Handed%"
