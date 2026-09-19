@@ -1017,52 +1017,94 @@ async def run_item_db(
         
         # ✅ Apply item type filter FIRST
         # "all" = keep everything
-        # "with_stats" = item must have at least one stat other than AC
-
+        # "with_stats" = item must contain one of the allowed stats
+        
         tf = (type_filter or "all").lower()
-
+        
         if tf == "with_stats":
-
-            def has_non_ac_stat(item_stats):
+        
+            # These are the ONLY stats that qualify an item for "With Stats"
+            allowed_stats = [
+                "AGI",
+                "CHA",
+                "DEX",
+                "INT",
+                "STA",
+                "STR",
+                "WIS",
+                "HP",
+                "Mana",
+                "SV",
+            ]
+        
+            def has_allowed_stat(item_stats):
                 if not item_stats:
                     return False
-
+        
                 stats_text = str(item_stats).strip()
-
+        
                 if not stats_text:
                     return False
-
+        
                 if stats_text.lower() in ("none", "none listed", "null"):
                     return False
-
-                # Check each line individually.
-                # We only want actual stat entries and ignore AC.
+        
+                # Check each line in Item_stats
                 for line in stats_text.replace("\r", "\n").split("\n"):
                     line = line.strip()
-
+        
                     if not line:
                         continue
-
+        
                     # Ignore "None listed"
                     if line.lower() in ("none", "none listed", "null"):
                         continue
-
-                    # Ignore AC
-                    if re.match(r"^\s*AC\s*:", line, re.IGNORECASE):
+        
+                    # Check the stat name before the colon.
+                    # Example:
+                    #   STR: 5       -> qualifies
+                    #   HP: 100      -> qualifies
+                    #   SV Fire: 10  -> qualifies
+                    #   AC: 10       -> does NOT qualify
+                    #   Classes: FTR -> does NOT qualify
+                    match = re.match(r"^\s*([^:]+)\s*:", line)
+        
+                    if not match:
                         continue
-
-                    # Ignore Classes because Classes are not item stats
-                    if re.match(r"^\s*Classes?\s*:", line, re.IGNORECASE):
-                        continue
-
-                    # Anything else is considered another stat
-                    return True
-
+        
+                    stat_name = match.group(1).strip()
+        
+                    # Direct stat match
+                    if stat_name.upper() in {
+                        "AGI",
+                        "CHA",
+                        "DEX",
+                        "INT",
+                        "STA",
+                        "STR",
+                        "WIS",
+                        "HP",
+                    }:
+                        return True
+        
+                    # Mana is case-insensitive
+                    if stat_name.lower() == "mana":
+                        return True
+        
+                    # Any SV stat qualifies:
+                    # SV Cold
+                    # SV Fire
+                    # SV Holy
+                    # SV Poison
+                    # etc.
+                    if stat_name.upper().startswith("SV"):
+                        return True
+        
                 return False
-
+        
             db_rows = [
                 r for r in db_rows
-                if has_non_ac_stat(r["item_stats"])
+                if has_allowed_stat(r["item_stats"])
             ]
 
 
