@@ -5126,32 +5126,31 @@ class SpellsSelectionView(View):
                 interaction: Interaction
             ):
 
-              if not self.selected_class:
-  
-                  await interaction.response.send_message(
-                      "Please select a class first.",
-                      ephemeral=True
-                  )
-  
-                  return
+                if not self.selected_class:
 
-            await interaction.response.defer(
-                ephemeral=True
-            )
+                    await interaction.response.send_message(
+                        "Please select a class first.",
+                        ephemeral=True
+                    )
 
-            spells = await get_class_spells(
-                self.selected_class,
-                self.min_level,
-                self.max_level
-            )
+                    return
 
-            embed = create_spells_embed(
-                self.selected_class,
-                spells,
-                self.range_name,
-                0
-            )
+                await interaction.response.defer(
+                    ephemeral=True
+                )
 
+                spells = await get_class_spells(
+                    self.selected_class,
+                    self.min_level,
+                    self.max_level
+                )
+
+                embed = create_spells_embed(
+                    self.selected_class,
+                    spells,
+                    self.range_name,
+                    0
+                )
             # ------------------------------------------------
             # PRIVATE RESULT
             #
