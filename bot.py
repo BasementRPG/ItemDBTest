@@ -5062,8 +5062,8 @@ class WikiSelectView(discord.ui.View):
                     value="SLA"
                 ),
                 discord.SelectOption(
-                    label="Hand to Hand",
-                    value="H2H"
+                    value="H2H",
+                    label="Hand to Hand"
                 ),
             ]
 
@@ -5074,12 +5074,12 @@ class WikiSelectView(discord.ui.View):
 
             self.skill_use_select.options = [
                 discord.SelectOption(
-                    label="ARC",
-                    value="Archery"
+                    label="Archery",
+                    value="ARC"
                 ),
                 discord.SelectOption(
-                    label="THR",
-                    value="Throwing"
+                    label="Throwing",
+                    value="THR"
                 ),
             ]
 
