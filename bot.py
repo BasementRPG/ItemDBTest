@@ -4977,7 +4977,8 @@ class SpellsSelectionView(View):
     def __init__(
         self,
         selected_class=None,
-        selected_range="all"
+        selected_range="all",
+        public=True
     ):
 
         super().__init__(
@@ -4989,6 +4990,8 @@ class SpellsSelectionView(View):
         self.selected_range = (
             selected_range
         )
+
+        self.public = public
 
         self.min_level = 1
         self.max_level = 60
@@ -5096,7 +5099,7 @@ class SpellsSelectionView(View):
                     spells,
                     self.range_name,
                     0,
-                    public=True
+                    public=self.public
                 )
             )
 
@@ -5712,17 +5715,14 @@ class SpellsResultsView(View):
 
             else:
 
-                embed = discord.Embed(
-                    title="📖 Spells & Abilities",
-                    description=(
-                        "Select a class."
-                    )
+                selection_view = SpellsSelectionView(
+                    public=False
                 )
-
+            
                 await interaction.response.edit_message(
-                    content=embed,
+                    content=selection_view.get_content(),
                     embed=None,
-                    view=SpellsPrivateClassView()
+                    view=selection_view
                 )
 
         change_class_button.callback = (
