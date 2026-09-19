@@ -949,7 +949,7 @@ async def run_item_db(
     slot: Optional[str],
     stat: Optional[str],
     classes: Optional[str],
-    type_filter:Optional[str] = "with_stats,
+    type_filter:Optional[str] = "with_stats",
     search_query = None,
     source_command="db",
     show_search = True
