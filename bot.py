@@ -1619,15 +1619,67 @@ async def fetch_wiki_items(slot_name: str):
     # -----------------------------
     try:
         async with async_playwright() as p:
-            browser = await p.chromium.launch(headless=True, args=["--no-sandbox"])
-            page = await browser.new_page()
 
-            await page.goto(category_url, timeout=60000)
-            await asyncio.sleep(1.5)
+            browser = await p.chromium.launch(
+                headless=True,
+                args=[
+                    "--no-sandbox",
+                    "--disable-setuid-sandbox",
+                    "--disable-dev-shm-usage",
+                ]
+            )
+
+            page = await browser.new_page(
+                user_agent=(
+                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                    "AppleWebKit/537.36 (KHTML, like Gecko) "
+                    "Chrome/138.0.0.0 Safari/537.36"
+                ),
+                extra_http_headers={
+                    "Accept": (
+                        "text/html,application/xhtml+xml,"
+                        "application/xml;q=0.9,image/avif,image/webp,"
+                        "*/*;q=0.8"
+                    ),
+                    "Accept-Language": "en-US,en;q=0.9",
+                    "Referer": (
+                        "https://monstersandmemories.miraheze.org/"
+                    ),
+                }
+            )
+
+            response = await page.goto(
+                category_url,
+                wait_until="domcontentloaded",
+                timeout=60000
+            )
+
+            if response:
+                print(
+                    f"🌐 Wiki category HTTP status: "
+                    f"{response.status}"
+                )
+
+            await page.wait_for_timeout(3000)
+
             html = await page.content()
+
+            print(
+                f"🌐 Wiki category HTML received: "
+                f"{len(html) if html else 0} bytes"
+            )
+
+            print(
+                f"🌐 Wiki page title: "
+                f"{await page.title()}"
+            )
+
             await browser.close()
 
-        soup = BeautifulSoup(html, "html.parser")
+        soup = BeautifulSoup(
+            html,
+            "html.parser"
+        )
 
     except Exception as e:
         print(f"⚠️ Playwright failed: {e}")
@@ -1637,12 +1689,24 @@ async def fetch_wiki_items(slot_name: str):
             "User-Agent": (
                 "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
                 "AppleWebKit/537.36 (KHTML, like Gecko) "
-                "Chrome/120.0.0.0 Safari/537.36"
+                "Chrome/138.0.0.0 Safari/537.36"
+            ),
+            "Accept": (
+                "text/html,application/xhtml+xml,"
+                "application/xml;q=0.9,image/avif,image/webp,"
+                "*/*;q=0.8"
             ),
             "Accept-Language": "en-US,en;q=0.9",
+            "Referer": (
+                "https://monstersandmemories.miraheze.org/"
+            ),
+            "Cache-Control": "no-cache",
+            "Pragma": "no-cache",
         }
 
-        async with aiohttp.ClientSession() as session:
+        async with aiohttp.ClientSession(
+            headers=headers
+        ) as session:
             async with session.get(category_url, headers=headers, ssl=False) as resp:
                 if resp.status != 200:
                     print(f"❌ Fallback request failed ({resp.status})")
@@ -1655,8 +1719,25 @@ async def fetch_wiki_items(slot_name: str):
     # 🔎 Parse item links
     # -----------------------------
     links = soup.select("div.mw-category a")
-
-    async with aiohttp.ClientSession() as session:
+    wiki_headers = {
+        "User-Agent": (
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+            "AppleWebKit/537.36 (KHTML, like Gecko) "
+            "Chrome/138.0.0.0 Safari/537.36"
+        ),
+        "Accept": (
+            "text/html,application/xhtml+xml,"
+            "application/xml;q=0.9,image/avif,image/webp,"
+            "*/*;q=0.8"
+        ),
+        "Accept-Language": "en-US,en;q=0.9",
+        "Referer": (
+            "https://monstersandmemories.miraheze.org/"
+        ),
+        "Cache-Control": "no-cache",
+        "Pragma": "no-cache",
+    }
+    async with aiohttp.ClientSession(headers=wiki_headers) as session:
         for link in links[:25]:
             item_url = f"{base_url}{link['href']}"
             item_name = link.text.strip()
