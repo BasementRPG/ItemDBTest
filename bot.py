@@ -1556,19 +1556,23 @@ class AllItemsButton(discord.ui.Button):
     def __init__(self, parent_view: "WikiSelectView"):
         super().__init__(
             label="🔍 All Items",
-            style=discord.ButtonStyle.secondary,
+            style=discord.ButtonStyle.secondary,  # GREY
             row=4
         )
         self.parent_view = parent_view
 
     async def callback(self, interaction: discord.Interaction):
+        # Set the filter
         self.parent_view.type_filter = "all"
 
-        # Update button appearance
-        self.style = discord.ButtonStyle.primary
-        self.parent_view.items_with_stats_button.style = discord.ButtonStyle.secondary
+        # All Items = GREY
+        self.style = discord.ButtonStyle.secondary
 
-        await interaction.response.edit_message(view=self.parent_view)
+        # Items With Stats = GREEN
+        self.parent_view.items_with_stats_button.style = discord.ButtonStyle.success
+
+        # Immediately run the search
+        await self.parent_view.confirm_selection(interaction)
 
 
 # --- Items With Stats button ---
@@ -1576,19 +1580,23 @@ class ItemsWithStatsButton(discord.ui.Button):
     def __init__(self, parent_view: "WikiSelectView"):
         super().__init__(
             label="🔍 Items With Stats",
-            style=discord.ButtonStyle.primary,
+            style=discord.ButtonStyle.success,  # GREEN
             row=4
         )
         self.parent_view = parent_view
 
     async def callback(self, interaction: discord.Interaction):
+        # Set the filter
         self.parent_view.type_filter = "with_stats"
 
-        # Update button appearance
-        self.style = discord.ButtonStyle.primary
+        # Items With Stats = GREEN
+        self.style = discord.ButtonStyle.success
+
+        # All Items = GREY
         self.parent_view.all_items_button.style = discord.ButtonStyle.secondary
 
-        await interaction.response.edit_message(view=self.parent_view)
+        # Immediately run the search
+        await self.parent_view.confirm_selection(interaction)
 
 
 # --- Modal with a single text input (the "search bar") ---
