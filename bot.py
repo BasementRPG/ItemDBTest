@@ -247,27 +247,27 @@ class SkillUseSelect(discord.ui.Select):
 
         if selected_slot == "Primary":
             options = [
-                "1H Bludgeoning",
-                "2H Bludgeoning",
-                "1H Piercing",
-                "2H Piercing",
-                "1H Slashing",
-                "2H Slashing",
-                "Hand to Hand"
+                ("1H Bludgeoning", "BLG"),
+                ("2H Bludgeoning", "BLG Two Handed"),
+                ("1H Piercing", "STA"),
+                ("2H Piercing", "STA Two Handed"),
+                ("1H Slashing", "SLA"),
+                ("2H Slashing", "SLA Two Handed"),
+                ("Hand to Hand", "H2H")
             ]
 
         elif selected_slot == "Secondary":
             options = [
-                "1H Bludgeoning",
-                "1H Piercing",
-                "1H Slashing",
-                "Hand to Hand"
+                ("1H Bludgeoning", "BLG"),
+                ("1H Piercing", "STA"),
+                ("1H Slashing", "SLA"),
+                ("Hand to Hand", "H2H")
             ]
 
         elif selected_slot == "Range":
             options = [
-                "Archery",
-                "Throwing"
+                ("Archery", "ARC"),
+                ("Throwing", "THR")
             ]
 
         else:
@@ -283,11 +283,11 @@ class SkillUseSelect(discord.ui.Select):
 
         self.options = [
             discord.SelectOption(
-                label=skill,
-                value=skill,
-                default=(skill == self.parent_view.skill_use)
+                label=label,
+                value=value,
+                default=(value == self.parent_view.skill_use)
             )
-            for skill in options
+            for label, value in options
         ]
 
         self.disabled = False
@@ -297,6 +297,7 @@ class SkillUseSelect(discord.ui.Select):
         if not self.values or self.values[0] == "disabled":
             self.parent_view.skill_use = None
         else:
+            # Save the VALUE of the SelectOption
             self.parent_view.skill_use = self.values[0]
 
         for option in self.options:
@@ -307,7 +308,6 @@ class SkillUseSelect(discord.ui.Select):
         await interaction.response.edit_message(
             view=self.parent_view
         )
-
 
 
 
