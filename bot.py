@@ -1493,13 +1493,14 @@ class WikiFoundDataView(discord.ui.View):
                 npc_image_url=npc_url if npc_msg else None,
                 item_msg_id=item_msg.id,
                 npc_msg_id=npc_msg.id if npc_msg else None,
-                upload_channel_id=upload_channel.id
+                upload_channel_id=upload_channel.id,
+                wiki_data=self.wiki_data
             )
 
             # IMPORTANT:
             # Manual entry completely ignores the Wiki data.
             view.item_name_from_check = self.item_name
-            view.wiki_data = None
+            view.wiki_data = self.wiki_data
 
             await interaction.response.edit_message(
                 content=(
@@ -1990,8 +1991,20 @@ class ItemNameCheckModal(discord.ui.Modal, title="Add Item to Database"):
 
 
 class SlotStatClassSelectView(discord.ui.View):
-    def __init__(self, db_pool, guild_id, added_by, item_image_url, npc_image_url, item_msg_id, npc_msg_id, upload_channel_id):
+    def __init__(
+        self,
+        db_pool,
+        guild_id,
+        added_by,
+        item_image_url,
+        npc_image_url,
+        item_msg_id,
+        npc_msg_id,
+        upload_channel_id,
+        wiki_data=None
+    ):
         super().__init__(timeout=900)
+
         self.db_pool = db_pool
         self.guild_id = guild_id
         self.added_by = added_by
@@ -2001,20 +2014,124 @@ class SlotStatClassSelectView(discord.ui.View):
         self.npc_msg_id = npc_msg_id
         self.upload_channel_id = upload_channel_id
 
-        
-        self.slot = None
+        self.wiki_data = wiki_data or {}
+
+        self.slot = []
         self.skill_use = None
         self.usable_classes = []
         self.all_stats = []
-        
+
+        # ============================================================
+        # PRE-POPULATE DROPDOWNS FROM WIKI DATA
+        # ============================================================
+
+        wiki_stats = self.wiki_data.get("item_stats", "") or ""
+
+        if wiki_stats:
+            for raw_line in wiki_stats.splitlines():
+
+                line = raw_line.strip()
+
+                if not line:
+                    continue
+
+                # ----------------------------------------------------
+                # SLOT
+                # ----------------------------------------------------
+
+                if line.lower().startswith("slot:"):
+                    raw_slots = line.split(":", 1)[1].strip()
+
+                    for slot_name in re.split(r"[,/|]+", raw_slots):
+                        slot_name = slot_name.strip()
+
+                        for valid_slot in ITEM_SLOTS:
+                            if slot_name.lower() == valid_slot.lower():
+                                if valid_slot not in self.slot:
+                                    self.slot.append(valid_slot)
+
+                # ----------------------------------------------------
+                # CLASSES
+                # Supports:
+                # Classes: ARC, FTR, WIZ
+                # Class: ARC, FTR, WIZ
+                # ----------------------------------------------------
+
+                elif (
+                    line.lower().startswith("classes:")
+                    or line.lower().startswith("class:")
+                ):
+                    raw_classes = line.split(":", 1)[1].strip()
+
+                    for class_name in re.split(r"[,/|]+", raw_classes):
+                        class_name = class_name.strip()
+
+                        for valid_class in CLASS_OPTIONS:
+                            if class_name.lower() == valid_class.lower():
+                                if valid_class not in self.usable_classes:
+                                    self.usable_classes.append(valid_class)
+
+                # ----------------------------------------------------
+                # STATS
+                # Supports:
+                # Stats: STR, STA, HP
+                # Stat: STR, STA, HP
+                # ----------------------------------------------------
+
+                elif (
+                    line.lower().startswith("stats:")
+                    or line.lower().startswith("stat:")
+                ):
+                    raw_stats = line.split(":", 1)[1].strip()
+
+                    for stat_name in re.split(r"[,/|]+", raw_stats):
+                        stat_name = stat_name.strip()
+
+                        for valid_stat in ITEM_STATS:
+                            if stat_name.lower() == valid_stat.lower():
+                                if valid_stat not in self.all_stats:
+                                    self.all_stats.append(valid_stat)
+
+                # ----------------------------------------------------
+                # SKILL USE
+                # ----------------------------------------------------
+
+                elif line.lower().startswith("skill use:"):
+                    skill_value = line.split(":", 1)[1].strip()
+
+                    valid_skill_uses = {
+                        "1H Bludgeoning",
+                        "2H Bludgeoning",
+                        "1H Piercing",
+                        "2H Piercing",
+                        "1H Slashing",
+                        "2H Slashing",
+                        "Hand to Hand",
+                        "Archery",
+                        "Throwing"
+                    }
+
+                    for valid_skill in valid_skill_uses:
+                        if skill_value.lower() == valid_skill.lower():
+                            self.skill_use = valid_skill
+                            break
+
+        # ============================================================
+        # CREATE DROPDOWNS
+        # ============================================================
+
         self._finalized = False
-        
+
         self.add_item(SlotSelect(self))
-        
-        # Skill Use dropdown
+
         self.skill_use_select = SkillUseSelect(self)
+
+        # SkillUseSelect starts disabled, so populate it from
+        # the Wiki-selected slot.
+        self.skill_use_select.update_options()
+
         self.add_item(self.skill_use_select)
-        
+
         self.add_item(ClassesSelect(self))
         self.add_item(StatSelect(self))
 
