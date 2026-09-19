@@ -4273,7 +4273,7 @@ async def scrape_class_spells(class_code: str):
     )
 
     # ---------------------------------------------------------
-    # Find the Class Abilities heading
+    # Find the Class Abilities / Spells heading
     # ---------------------------------------------------------
 
     abilities_heading = None
@@ -4282,6 +4282,7 @@ async def scrape_class_spells(class_code: str):
         f"{class_name}_Abilities",
         f"{class_name}_Spells",
         f"{class_name}_Spells_&_Abilities",
+        f"{class_name}_Songs_&_Abilities",
     ]
     
     for heading_id in heading_ids:
