@@ -5157,25 +5157,25 @@ class SpellsSelectionView(View):
             # Original selection message is untouched.
             # ------------------------------------------------
 
-            await interaction.followup.send(
-                content=embed,
-                view=SpellsResultsView(
-                    self.selected_class,
-                    spells,
-                    self.range_name,
-                    0,
-                    public=False
-                ),
-                ephemeral=True
-            )
-
-        private_button.callback = (
-            private_callback
-        )
-
-        self.add_item(
-            private_button
-        )
+              await interaction.followup.send(
+                  content=embed,
+                  view=SpellsResultsView(
+                      self.selected_class,
+                      spells,
+                      self.range_name,
+                      0,
+                      public=False
+                  ),
+                  ephemeral=True
+              )
+  
+          private_button.callback = (
+              private_callback
+          )
+  
+          self.add_item(
+              private_button
+          )
 
     # ========================================================
     # INITIAL MESSAGE TEXT
