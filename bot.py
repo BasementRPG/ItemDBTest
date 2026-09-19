@@ -286,6 +286,465 @@ class StatSelect(discord.ui.Select):
 
 
 
+# ============================================================
+# Item Name Start View
+# ============================================================
+
+class ItemNameStartView(discord.ui.View):
+    def __init__(
+        self,
+        db_pool,
+        guild_id,
+        added_by,
+        item_image_url,
+        npc_image_url,
+        item_msg_id,
+        npc_msg_id,
+        upload_channel_id
+    ):
+        super().__init__(timeout=900)
+
+        self.db_pool = db_pool
+        self.guild_id = guild_id
+        self.added_by = added_by
+
+        self.item_image_url = item_image_url
+        self.npc_image_url = npc_image_url
+        self.item_msg_id = item_msg_id
+        self.npc_msg_id = npc_msg_id
+        self.upload_channel_id = upload_channel_id
+
+    async def _delete_uploads(self, interaction: discord.Interaction):
+        """Best-effort delete of uploaded item/NPC images."""
+        try:
+            channel = (
+                interaction.client.get_channel(self.upload_channel_id)
+                or await interaction.client.fetch_channel(self.upload_channel_id)
+            )
+
+            if self.item_msg_id:
+                try:
+                    msg = await channel.fetch_message(self.item_msg_id)
+                    await msg.delete()
+                except Exception:
+                    pass
+
+            if self.npc_msg_id:
+                try:
+                    msg = await channel.fetch_message(self.npc_msg_id)
+                    await msg.delete()
+                except Exception:
+                    pass
+
+        except Exception:
+            pass
+
+    @discord.ui.button(
+        label="📝 Enter Item Name",
+        style=discord.ButtonStyle.primary
+    )
+    async def enter_item_name(
+        self,
+        interaction: discord.Interaction,
+        button: discord.ui.Button
+    ):
+        await interaction.response.send_modal(
+            ItemNameCheckModal(
+                db_pool=self.db_pool,
+                guild_id=self.guild_id,
+                added_by=self.added_by,
+                item_image_url=self.item_image_url,
+                npc_image_url=self.npc_image_url,
+                item_msg_id=self.item_msg_id,
+                npc_msg_id=self.npc_msg_id,
+                upload_channel_id=self.upload_channel_id
+            )
+        )
+
+    @discord.ui.button(
+        label="❌ Cancel",
+        style=discord.ButtonStyle.danger
+    )
+    async def cancel(
+        self,
+        interaction: discord.Interaction,
+        button: discord.ui.Button
+    ):
+        await self._delete_uploads(interaction)
+
+        for child in self.children:
+            child.disabled = True
+
+        await interaction.response.edit_message(
+            content="❌ Upload cancelled and images deleted.",
+            view=None
+        )
+
+        self.stop()
+
+
+# ============================================================
+# Item Name Check Modal
+# ============================================================
+
+class ItemNameCheckModal(discord.ui.Modal, title="Add New Item"):
+    def __init__(
+        self,
+        db_pool,
+        guild_id,
+        added_by,
+        item_image_url,
+        npc_image_url,
+        item_msg_id,
+        npc_msg_id,
+        upload_channel_id
+    ):
+        super().__init__(timeout=900)
+
+        self.db_pool = db_pool
+        self.guild_id = guild_id
+        self.added_by = added_by
+
+        self.item_image_url = item_image_url
+        self.npc_image_url = npc_image_url
+        self.item_msg_id = item_msg_id
+        self.npc_msg_id = npc_msg_id
+        self.upload_channel_id = upload_channel_id
+
+        self.item_name = discord.ui.TextInput(
+            label="Item Name",
+            placeholder="Enter the exact item name",
+            required=True,
+            max_length=100
+        )
+
+        self.add_item(self.item_name)
+
+    async def _delete_uploads(self, interaction: discord.Interaction):
+        """Best-effort delete of uploaded item/NPC images."""
+        try:
+            channel = (
+                interaction.client.get_channel(self.upload_channel_id)
+                or await interaction.client.fetch_channel(self.upload_channel_id)
+            )
+
+            if self.item_msg_id:
+                try:
+                    msg = await channel.fetch_message(self.item_msg_id)
+                    await msg.delete()
+                except Exception:
+                    pass
+
+            if self.npc_msg_id:
+                try:
+                    msg = await channel.fetch_message(self.npc_msg_id)
+                    await msg.delete()
+                except Exception:
+                    pass
+
+        except Exception:
+            pass
+
+    async def on_submit(self, interaction: discord.Interaction):
+
+        # ----------------------------------------------------
+        # Clean item name
+        # ----------------------------------------------------
+        item_name = self.item_name.value.strip()
+
+        if not item_name:
+            await interaction.response.send_message(
+                "❌ Item name is required.",
+                ephemeral=True
+            )
+            return
+
+        # ----------------------------------------------------
+        # STEP 1 — Check database
+        # ----------------------------------------------------
+        try:
+            async with self.db_pool.acquire() as conn:
+
+                existing = await conn.fetchrow(
+                    """
+                    SELECT id, item_name
+                    FROM item_database
+                    WHERE guild_id = $1
+                      AND LOWER(TRIM(item_name)) = LOWER(TRIM($2))
+                    LIMIT 1
+                    """,
+                    self.guild_id,
+                    item_name
+                )
+
+        except Exception as e:
+            print(f"❌ Item name database check failed: {e}")
+
+            await interaction.response.send_message(
+                "❌ I couldn't check the item database right now. "
+                "Please try again.",
+                ephemeral=True
+            )
+            return
+
+        # ----------------------------------------------------
+        # Item already exists
+        # ----------------------------------------------------
+        if existing:
+            await interaction.response.send_message(
+                (
+                    f"❌ **Item already exists.**\n\n"
+                    f"**{existing['item_name']}** is already in the "
+                    f"item database.\n\n"
+                    f"Please use `/edit_item_db` for existing items."
+                ),
+                ephemeral=True
+            )
+            return
+
+        # ----------------------------------------------------
+        # STEP 2 — Go directly to Wiki item page
+        # ----------------------------------------------------
+        wiki_base = "https://monstersandmemories.miraheze.org/wiki"
+
+        wiki_item_name = item_name.replace(" ", "_")
+
+        wiki_url = f"{wiki_base}/{wiki_item_name}"
+
+        print("")
+        print("=" * 70)
+        print(f"🌐 Checking Wiki for item: {item_name}")
+        print(f"🌐 Wiki URL: {wiki_url}")
+        print("=" * 70)
+
+        headers = {
+            "User-Agent": (
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                "AppleWebKit/537.36 (KHTML, like Gecko) "
+                "Chrome/138.0.0.0 Safari/537.36"
+            ),
+            "Accept": (
+                "text/html,application/xhtml+xml,"
+                "application/xml;q=0.9,image/avif,image/webp,"
+                "*/*;q=0.8"
+            ),
+            "Accept-Language": "en-US,en;q=0.9",
+            "Referer": (
+                "https://monstersandmemories.miraheze.org/"
+            ),
+        }
+
+        timeout = aiohttp.ClientTimeout(total=30)
+
+        wiki_found = False
+        wiki_html = None
+
+        try:
+            async with aiohttp.ClientSession(
+                headers=headers,
+                timeout=timeout
+            ) as session:
+
+                async with session.get(
+                    wiki_url,
+                    allow_redirects=True,
+                    ssl=False
+                ) as response:
+
+                    print(
+                        f"🌐 Wiki HTTP status: {response.status}"
+                    )
+
+                    if response.status == 200:
+
+                        wiki_html = await response.text(
+                            errors="ignore"
+                        )
+
+                        if wiki_html and len(wiki_html) >= 1000:
+
+                            soup = BeautifulSoup(
+                                wiki_html,
+                                "html.parser"
+                            )
+
+                            # ------------------------------------------------
+                            # Confirm that this is a real Wiki article.
+                            # ------------------------------------------------
+                            page_title = soup.find(
+                                "h1",
+                                id="firstHeading"
+                            )
+
+                            if page_title:
+
+                                actual_title = page_title.get_text(
+                                    " ",
+                                    strip=True
+                                )
+
+                                print(
+                                    f"📖 Wiki page title: {actual_title}"
+                                )
+
+                                if (
+                                    actual_title.strip().lower()
+                                    == item_name.strip().lower()
+                                ):
+                                    wiki_found = True
+
+                            # Fallback to HTML title
+                            if not wiki_found:
+
+                                html_title = soup.find("title")
+
+                                if html_title:
+
+                                    title_text = html_title.get_text(
+                                        " ",
+                                        strip=True
+                                    )
+
+                                    print(
+                                        f"📖 Wiki HTML title: {title_text}"
+                                    )
+
+                                    if (
+                                        item_name.strip().lower()
+                                        in title_text.lower()
+                                        and
+                                        "does not exist"
+                                        not in title_text.lower()
+                                    ):
+                                        wiki_found = True
+
+        except Exception as e:
+
+            print(
+                f"⚠️ Wiki lookup failed: {e}"
+            )
+
+            await interaction.response.send_message(
+                (
+                    "⚠️ I couldn't check the Monsters & Memories "
+                    "Wiki right now.\n\n"
+                    "Please try again in a moment."
+                ),
+                ephemeral=True
+            )
+
+            return
+
+        # ----------------------------------------------------
+        # STEP 3 — Wiki item found
+        #
+        # We are NOT scraping/populating the database yet.
+        # That will be the next step.
+        # ----------------------------------------------------
+        if wiki_found:
+
+            print(
+                f"✅ Wiki item found: {item_name}"
+            )
+
+            await interaction.response.send_message(
+                (
+                    f"📖 **Wiki Item Found!**\n\n"
+                    f"**{item_name}** exists on the "
+                    f"Monsters & Memories Wiki.\n\n"
+                    f"🔗 [View Wiki Page]({wiki_url})\n\n"
+                    f"**Wiki data review will be added next.**"
+                ),
+                ephemeral=True
+            )
+
+            return
+
+        # ----------------------------------------------------
+        # STEP 4 — Wiki item NOT found
+        #
+        # Continue with the EXISTING creation process.
+        # ----------------------------------------------------
+        print(
+            f"ℹ️ Item not found on Wiki: {item_name}"
+        )
+
+        try:
+
+            view = SlotStatClassSelectView(
+                db_pool=self.db_pool,
+                guild_id=self.guild_id,
+                added_by=self.added_by,
+                item_image_url=self.item_image_url,
+                npc_image_url=self.npc_image_url,
+                item_msg_id=self.item_msg_id,
+                npc_msg_id=self.npc_msg_id,
+                upload_channel_id=self.upload_channel_id
+            )
+
+            sent = await interaction.response.send_message(
+                (
+                    f"❌ **{item_name}** was not found on the Wiki.\n\n"
+                    "Select the **Slot**, **Classes**, and **Stats** "
+                    "for this item:"
+                ),
+                view=view,
+                ephemeral=True
+            )
+
+            view.origin_message = sent
+
+        except Exception as e:
+
+            print(
+                f"❌ Failed to open existing item creation flow: {e}"
+            )
+
+            try:
+                if interaction.response.is_done():
+                    await interaction.followup.send(
+                        "❌ I couldn't open the item creation form.",
+                        ephemeral=True
+                    )
+                else:
+                    await interaction.response.send_message(
+                        "❌ I couldn't open the item creation form.",
+                        ephemeral=True
+                    )
+            except Exception:
+                pass
+
+    async def on_error(
+        self,
+        interaction: discord.Interaction,
+        error: Exception
+    ):
+        print(
+            f"❌ ItemNameCheckModal error: {error}"
+        )
+
+        try:
+            if interaction.response.is_done():
+
+                await interaction.followup.send(
+                    "❌ Something went wrong while checking the item name.",
+                    ephemeral=True
+                )
+
+            else:
+
+                await interaction.response.send_message(
+                    "❌ Something went wrong while checking the item name.",
+                    ephemeral=True
+                )
+
+        except Exception:
+            pass
+
+
+
+
+
 class SlotStatClassSelectView(discord.ui.View):
     def __init__(self, db_pool, guild_id, added_by, item_image_url, npc_image_url, item_msg_id, npc_msg_id, upload_channel_id):
         super().__init__(timeout=900)
@@ -614,9 +1073,13 @@ async def add_item_db(interaction: discord.Interaction, item_image: discord.Atta
         npc_url = npc_msg.attachments[0].url if npc_msg else ""
         item_msg_id = item_msg.id
         npc_msg_id = npc_msg.id if npc_msg else None
-    
-        # Launch Slot/Stat/Class view
-        view = SlotStatClassSelectView(
+
+      
+        # ============================================================
+        # Step 1 — Ask for Item Name before Slot/Class/Stats
+        # ============================================================
+        
+        view = ItemNameStartView(
             db_pool=db_pool,
             guild_id=guild.id,
             added_by=added_by,
@@ -626,15 +1089,17 @@ async def add_item_db(interaction: discord.Interaction, item_image: discord.Atta
             npc_msg_id=npc_msg_id if npc_msg else None,
             upload_channel_id=upload_channel.id
         )
-    
-       
+        
         sent = await interaction.followup.send(
-            "Select the **Slot**, **Classes**, and **Stats** for this item:",
+            (
+                "Before adding the item, let's check whether it already "
+                "exists in the database or on the Wiki.\n\n"
+                "Click **📝 Enter Item Name** to continue."
+            ),
             view=view,
             ephemeral=True
         )
-
-        # store the interaction message ID for the modal to edit later
+        
         view.origin_message = sent
 
     
