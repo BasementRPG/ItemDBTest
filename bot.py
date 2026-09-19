@@ -1493,7 +1493,7 @@ class WikiFoundDataView(discord.ui.View):
                 npc_image_url=npc_url if npc_msg else None,
                 item_msg_id=item_msg.id,
                 npc_msg_id=npc_msg.id if npc_msg else None,
-                upload_channel.id
+                upload_channel_id=upload_channel.id
             )
 
             # IMPORTANT:
@@ -1556,7 +1556,8 @@ class ItemNameCheckModal(discord.ui.Modal, title="Add Item to Database"):
         added_by,
         item_image,
         npc_image,
-        None
+        upload_channel_id=None
+        
     ):
         super().__init__(timeout=900)
 
