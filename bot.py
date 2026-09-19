@@ -1505,10 +1505,10 @@ async def run_item_db(
             elif stat_filter == "instrument":
                 # Instrument items can be any of these instrument types.
                 stat_patterns = [
-                    re.compile(r"\bPercussion\b", re.IGNORECASE),
-                    re.compile(r"\bWind\b", re.IGNORECASE),
-                    re.compile(r"\bStringed\b", re.IGNORECASE),
-                    re.compile(r"\bBrass\b", re.IGNORECASE)
+                    re.compile(r"\bPercussion:\b", re.IGNORECASE),
+                    re.compile(r"\bWind:\b", re.IGNORECASE),
+                    re.compile(r"\bStringed:\b", re.IGNORECASE),
+                    re.compile(r"\bBrass:\b", re.IGNORECASE)
                 ]
 
             else:
