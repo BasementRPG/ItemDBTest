@@ -1536,14 +1536,59 @@ async def run_item_db(
 
 
 
+
 # --- Search button that opens a modal ---
 class SearchButton(discord.ui.Button):
     def __init__(self, parent_view: "WikiSelectView"):
-        super().__init__(label="🔍 Enter Search Term", style=discord.ButtonStyle.primary)
+        super().__init__(
+            label="🖋️ Enter Search Term",
+            style=discord.ButtonStyle.primary,
+            row=4
+        )
         self.parent_view = parent_view
 
     async def callback(self, interaction: discord.Interaction):
         await interaction.response.send_modal(SearchModal(self.parent_view))
+
+
+# --- All Items button ---
+class AllItemsButton(discord.ui.Button):
+    def __init__(self, parent_view: "WikiSelectView"):
+        super().__init__(
+            label="🔍 All Items",
+            style=discord.ButtonStyle.secondary,
+            row=4
+        )
+        self.parent_view = parent_view
+
+    async def callback(self, interaction: discord.Interaction):
+        self.parent_view.type_filter = "all"
+
+        # Update button appearance
+        self.style = discord.ButtonStyle.primary
+        self.parent_view.items_with_stats_button.style = discord.ButtonStyle.secondary
+
+        await interaction.response.edit_message(view=self.parent_view)
+
+
+# --- Items With Stats button ---
+class ItemsWithStatsButton(discord.ui.Button):
+    def __init__(self, parent_view: "WikiSelectView"):
+        super().__init__(
+            label="🔍 Items With Stats",
+            style=discord.ButtonStyle.primary,
+            row=4
+        )
+        self.parent_view = parent_view
+
+    async def callback(self, interaction: discord.Interaction):
+        self.parent_view.type_filter = "with_stats"
+
+        # Update button appearance
+        self.style = discord.ButtonStyle.primary
+        self.parent_view.all_items_button.style = discord.ButtonStyle.secondary
+
+        await interaction.response.edit_message(view=self.parent_view)
 
 
 # --- Modal with a single text input (the "search bar") ---
@@ -1561,12 +1606,12 @@ class SearchModal(discord.ui.Modal, title="Search Database"):
         self.add_item(self.query)
 
     async def on_submit(self, interaction: discord.Interaction):
-        # stash the query back on the filter view
+        # Store the search term
         self.parent_view.search_query = (self.query.value or "").strip()
-        await interaction.response.send_message(
-            f"✅ Search set to: `{self.parent_view.search_query or '— (cleared) —'}`",
-            ephemeral=True
-        )
+
+        # Immediately run the search using all currently selected filters.
+        # An empty search term is allowed and simply searches the dropdown filters.
+        await self.parent_view.confirm_selection(interaction)
 
 
 
@@ -2951,15 +2996,36 @@ class WikiSelectView(discord.ui.View):
         self.classes_select.callback = self.select_classes
         self.add_item(self.classes_select)
 
+        
+        # ---------------------------------------------------------
+        # Bottom button row
+        # Row 4 is shared by buttons.
+        # The four dropdowns above occupy rows 0-3.
+        # ---------------------------------------------------------
+
+        self.type_filter = "with_stats"
+
         if source_command in ("db", "dbp"):
-            self.add_item(TypeSelect())  # <-- your new dropdown
-      
-        if show_search:
-            self.add_item(SearchButton(self))
-        # Confirm button
-        confirm_button = discord.ui.Button(label="✅ Search", style=discord.ButtonStyle.green)
-        confirm_button.callback = self.confirm_selection
-        self.add_item(confirm_button)
+
+            # Search text button
+            if show_search:
+                self.add_item(SearchButton(self))
+
+            # All Items button
+            self.all_items_button = AllItemsButton(self)
+            self.add_item(self.all_items_button)
+
+            # Items With Stats button
+            self.items_with_stats_button = ItemsWithStatsButton(self)
+            self.add_item(self.items_with_stats_button)
+
+         
+
+        else:
+
+            # Wiki search does not use the database Type buttons.
+            if show_search:
+                self.add_item(SearchButton(self))
 
         self.value = None
 
