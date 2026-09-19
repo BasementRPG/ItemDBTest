@@ -1489,12 +1489,7 @@ class WikiView(discord.ui.View):
                 embed.set_image(url=item["item_image"])
             if item["npc_image"] != "":
                 embed.set_thumbnail(url=item["npc_image"])            
-            if item["quest_name"] != "":
-                embed.add_field(name="🧩 Related Quest", value=f"[{item['quest_name']}]({quest_link})", inline=False)
-            if item["crafted_name"] != "":
-                embed.add_field(name="⚒️ Crafted Item", value=f"[{crafted_name}]({crafted_link})", inline=True)
-            if item["crafting_recipe"] !="":
-                embed.add_field(name=f"📜 Recipe: {yield_text}", value=f"{display_recipe}", inline=True)
+         
             embed.set_footer(
                 text=f"Page {page_index + 1}/{self.total_pages()} - Total Results: {len(self.items)}"
             )
@@ -2631,10 +2626,7 @@ class ItemSelectMenu(discord.ui.Select):
             embed.set_image(url=item["item_image"])
         if item["npc_image"] != "":
             embed.set_thumbnail(url=item["npc_image"])            
-        if item["quest_name"] != "":
-            embed.add_field(name="🧩 Related Quest", value=f"[{item['quest_name']}]({quest_link})", inline=False)
-        if item["crafted_name"] != "":
-            embed.add_field(name="⚒️ Crafted Item", value=f"[{crafted_name}]({crafted_link})", inline=False)  
+      
 
         await interaction.response.send_message(embed=embed, ephemeral=True)
 
