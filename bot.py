@@ -977,47 +977,276 @@ async def run_item_db(
         params.extend([f"%{search_query}%", f"%{search_query}%", f"%{search_query}%"])
 
   
+    if slot:
+        # Primary / Secondary / Range are identified in item_stats.
+        slot_lower = slot.lower()
+
+        if slot_lower in ("primary", "secondary", "range"):
+            where_clauses.append(
+                "(item_stats ILIKE $%d OR item_slot ILIKE $%d)"
+                % (len(params) + 1, len(params) + 2)
+            )
+            params.append(f"%{slot}%")
+            params.append(f"%{slot}%")
+
+        else:
+            where_clauses.append(
+                "LOWER(item_slot) = LOWER($%d)"
+                % (len(params) + 1)
+            )
+            params.append(slot)
+    
+    # Search across item_name, npc_name, zone_name with ILIKE
+    if search_query:
+        where_clauses.append(
+            "(item_name ILIKE $%d OR npc_name ILIKE $%d OR zone_name ILIKE $%d)"
+            % (len(params) + 1, len(params) + 2, len(params) + 3)
+        )
+        params.extend([
+            f"%{search_query}%",
+            f"%{search_query}%",
+            f"%{search_query}%"
+        ])
+
+    # --------------------------------------------------------
+    # Slot filtering
+    # --------------------------------------------------------
+
+    if slot:
+        slot_lower = slot.lower()
+
+        if slot_lower in ("primary", "secondary", "range"):
+            where_clauses.append(
+                "(item_stats ILIKE $%d OR item_slot ILIKE $%d)"
+                % (len(params) + 1, len(params) + 2)
+            )
+            params.append(f"%{slot}%")
+            params.append(f"%{slot}%")
+
+        else:
+            where_clauses.append(
+                "LOWER(item_slot) = LOWER($%d)"
+                % (len(params) + 1)
+            )
+            params.append(slot)
+
+    # --------------------------------------------------------
     # Skill Use filtering
-    # Skill Use only applies to Primary, Secondary, and Range.
-    if skill_use and slot and slot.lower() in ("primary", "secondary", "range"):
+    # --------------------------------------------------------
 
-        skill_patterns = {
-            "1H Bludgeoning": ["BLD"],
-            "2H Bludgeoning": ["BLD"],
-            "1H Piercing": ["PRC"],
-            "2H Piercing": ["PRC"],
-            "1H Slashing": ["SLH"],
-            "2H Slashing": ["SLH"],
-            "Archery": ["Archery"],
-            "Instrument": ["Instrument"],
-            "Hand to Hand": ["Hand to Hand"],
-            "Throwing": ["Throwing"],
-        }
+    if skill_use and slot:
 
-        skill_terms = skill_patterns.get(skill_use, [])
+        slot_lower = slot.lower()
 
-        if skill_terms:
-            skill_conditions = []
+        # Primary
+        if slot_lower == "primary":
 
-            for term in skill_terms:
-                param_num = len(params) + 1
-                skill_conditions.append(
-                    f"item_stats ILIKE ${param_num}"
+            if skill_use == "1H Bludgeoning":
+                where_clauses.append(
+                    "item_stats ILIKE $%d "
+                    "AND item_stats ILIKE $%d "
+                    "AND item_stats NOT ILIKE $%d"
+                    % (
+                        len(params) + 1,
+                        len(params) + 2,
+                        len(params) + 3
+                    )
                 )
-                params.append(f"%{term}%")
+                params.extend([
+                    "%Primary%",
+                    "%BLD%",
+                    "%Two Handed%"
+                ])
 
-            where_clauses.append(
-                "(" + " OR ".join(skill_conditions) + ")"
-            )
+            elif skill_use == "2H Bludgeoning":
+                where_clauses.append(
+                    "item_stats ILIKE $%d "
+                    "AND item_stats ILIKE $%d"
+                    % (
+                        len(params) + 1,
+                        len(params) + 2
+                    )
+                )
+                params.extend([
+                    "%Primary Two Handed%",
+                    "%BLD%"
+                ])
 
-        # 2H skills must also contain "Two Handed".
-        if skill_use.startswith("2H "):
-            param_num = len(params) + 1
-            where_clauses.append(
-                f"item_stats ILIKE ${param_num}"
-            )
-            params.append("%Two Handed%")
+            elif skill_use == "1H Piercing":
+                where_clauses.append(
+                    "item_stats ILIKE $%d "
+                    "AND item_stats ILIKE $%d "
+                    "AND item_stats NOT ILIKE $%d"
+                    % (
+                        len(params) + 1,
+                        len(params) + 2,
+                        len(params) + 3
+                    )
+                )
+                params.extend([
+                    "%Primary%",
+                    "%PRC%",
+                    "%Two Handed%"
+                ])
 
+            elif skill_use == "2H Piercing":
+                where_clauses.append(
+                    "item_stats ILIKE $%d "
+                    "AND item_stats ILIKE $%d"
+                    % (
+                        len(params) + 1,
+                        len(params) + 2
+                    )
+                )
+                params.extend([
+                    "%Primary Two Handed%",
+                    "%PRC%"
+                ])
+
+            elif skill_use == "1H Slashing":
+                where_clauses.append(
+                    "item_stats ILIKE $%d "
+                    "AND item_stats ILIKE $%d "
+                    "AND item_stats NOT ILIKE $%d"
+                    % (
+                        len(params) + 1,
+                        len(params) + 2,
+                        len(params) + 3
+                    )
+                )
+                params.extend([
+                    "%Primary%",
+                    "%SLH%",
+                    "%Two Handed%"
+                ])
+
+            elif skill_use == "2H Slashing":
+                where_clauses.append(
+                    "item_stats ILIKE $%d "
+                    "AND item_stats ILIKE $%d"
+                    % (
+                        len(params) + 1,
+                        len(params) + 2
+                    )
+                )
+                params.extend([
+                    "%Primary Two Handed%",
+                    "%SLH%"
+                ])
+
+            elif skill_use == "Hand to Hand":
+                where_clauses.append(
+                    "item_stats ILIKE $%d "
+                    "AND item_stats ILIKE $%d"
+                    % (
+                        len(params) + 1,
+                        len(params) + 2
+                    )
+                )
+                params.extend([
+                    "%Primary%",
+                    "%Hand to Hand%"
+                ])
+
+        # Secondary
+        elif slot_lower == "secondary":
+
+            if skill_use == "1H Bludgeoning":
+                where_clauses.append(
+                    "item_stats ILIKE $%d "
+                    "AND item_stats ILIKE $%d "
+                    "AND item_stats NOT ILIKE $%d"
+                    % (
+                        len(params) + 1,
+                        len(params) + 2,
+                        len(params) + 3
+                    )
+                )
+                params.extend([
+                    "%Secondary%",
+                    "%BLD%",
+                    "%Two Handed%"
+                ])
+
+            elif skill_use == "1H Piercing":
+                where_clauses.append(
+                    "item_stats ILIKE $%d "
+                    "AND item_stats ILIKE $%d "
+                    "AND item_stats NOT ILIKE $%d"
+                    % (
+                        len(params) + 1,
+                        len(params) + 2,
+                        len(params) + 3
+                    )
+                )
+                params.extend([
+                    "%Secondary%",
+                    "%PRC%",
+                    "%Two Handed%"
+                ])
+
+            elif skill_use == "1H Slashing":
+                where_clauses.append(
+                    "item_stats ILIKE $%d "
+                    "AND item_stats ILIKE $%d "
+                    "AND item_stats NOT ILIKE $%d"
+                    % (
+                        len(params) + 1,
+                        len(params) + 2,
+                        len(params) + 3
+                    )
+                )
+                params.extend([
+                    "%Secondary%",
+                    "%SLH%",
+                    "%Two Handed%"
+                ])
+
+            elif skill_use == "Hand to Hand":
+                where_clauses.append(
+                    "item_stats ILIKE $%d "
+                    "AND item_stats ILIKE $%d"
+                    % (
+                        len(params) + 1,
+                        len(params) + 2
+                    )
+                )
+                params.extend([
+                    "%Secondary%",
+                    "%Hand to Hand%"
+                ])
+
+        # Range
+        elif slot_lower == "range":
+
+            if skill_use == "Archery":
+                where_clauses.append(
+                    "item_stats ILIKE $%d "
+                    "AND item_stats ILIKE $%d"
+                    % (
+                        len(params) + 1,
+                        len(params) + 2
+                    )
+                )
+                params.extend([
+                    "%Range%",
+                    "%Archery%"
+                ])
+
+            elif skill_use == "Throwing":
+                where_clauses.append(
+                    "item_stats ILIKE $%d "
+                    "AND item_stats ILIKE $%d"
+                    % (
+                        len(params) + 1,
+                        len(params) + 2
+                    )
+                )
+                params.extend([
+                    "%Range%",
+                    "%Throwing%"
+                ])
+              
 
     # Only this guild and global entries
     where_clauses.append("(guild_id = $%d OR guild_id IS NULL)" % (len(params)+1))
@@ -1164,10 +1393,20 @@ async def run_item_db(
                 stat_patterns = [
                     re.compile(r"\bSpell\s+Haste\b", re.IGNORECASE)
                 ]
+     
             elif stat_filter == "ranged haste":
                 # Match only Ranged Haste
                 stat_patterns = [
                     re.compile(r"\bRanged\s+Haste\b", re.IGNORECASE)
+                ]
+
+            elif stat_filter == "instrument":
+                # Instrument items can be any of these instrument types.
+                stat_patterns = [
+                    re.compile(r"\bPercussion\b", re.IGNORECASE),
+                    re.compile(r"\bWind\b", re.IGNORECASE),
+                    re.compile(r"\bStringed\b", re.IGNORECASE),
+                    re.compile(r"\bBrass\b", re.IGNORECASE)
                 ]
 
             else:
@@ -2596,8 +2835,8 @@ class WikiSelectView(discord.ui.View):
         self.slot: Optional[str] = None
         self.stat: Optional[str] = None
         self.classes: Optional[str] = None
-        self.ephermeral = ephemeral
         self.skill_use: Optional[str] = None
+        self.ephermeral = ephemeral
 
         
         # Slot dropdown
@@ -2631,23 +2870,17 @@ class WikiSelectView(discord.ui.View):
         self.slot_select.callback = self.select_slot
         self.add_item(self.slot_select)
 
-              # Skill Use dropdown
+                # Skill Use dropdown
         self.skill_use_select = discord.ui.Select(
             placeholder="⚔️ Skill Use (select Primary, Secondary, or Range first)...",
             min_values=0,
             max_values=1,
             disabled=True,
             options=[
-                discord.SelectOption(label="1H Bludgeoning", value="1H Bludgeoning"),
-                discord.SelectOption(label="2H Bludgeoning", value="2H Bludgeoning"),
-                discord.SelectOption(label="1H Piercing", value="1H Piercing"),
-                discord.SelectOption(label="2H Piercing", value="2H Piercing"),
-                discord.SelectOption(label="1H Slashing", value="1H Slashing"),
-                discord.SelectOption(label="2H Slashing", value="2H Slashing"),
-                discord.SelectOption(label="Archery", value="Archery"),
-                discord.SelectOption(label="Instrument", value="Instrument"),
-                discord.SelectOption(label="Hand to Hand", value="Hand to Hand"),
-                discord.SelectOption(label="Throwing", value="Throwing"),
+                discord.SelectOption(
+                    label="Select a Slot first",
+                    value="disabled"
+                )
             ]
         )
         self.skill_use_select.callback = self.select_skill_use
@@ -2681,6 +2914,7 @@ class WikiSelectView(discord.ui.View):
                 discord.SelectOption(label="SV Holy", value="SV Holy"),
                 discord.SelectOption(label="SV Magic", value="SV Magic"),
                 discord.SelectOption(label="SV Poison", value="SV Poison"),
+                discrod.SelectOption(label="Instrument", value="Instrument"),
                 
               
             ]
@@ -2733,38 +2967,154 @@ class WikiSelectView(discord.ui.View):
     async def select_slot(self, interaction: discord.Interaction):
         self.slot = self.slot_select.values[0]
 
-        # Skill Use is only available for Primary, Secondary, and Range.
-        if self.slot in ("Primary", "Secondary", "Range"):
+        # Keep the selected Slot highlighted in the dropdown.
+        for option in self.slot_select.options:
+            option.default = (option.value == self.slot)
+
+        # Clear any previous Skill Use selection.
+        self.skill_use = None
+
+        # ----------------------------------------------------
+        # Build Skill Use options based on selected Slot.
+        # ----------------------------------------------------
+
+        if self.slot == "Primary":
+
+            self.skill_use_select.options = [
+                discord.SelectOption(
+                    label="1H Bludgeoning",
+                    value="1H Bludgeoning"
+                ),
+                discord.SelectOption(
+                    label="2H Bludgeoning",
+                    value="2H Bludgeoning"
+                ),
+                discord.SelectOption(
+                    label="1H Piercing",
+                    value="1H Piercing"
+                ),
+                discord.SelectOption(
+                    label="2H Piercing",
+                    value="2H Piercing"
+                ),
+                discord.SelectOption(
+                    label="1H Slashing",
+                    value="1H Slashing"
+                ),
+                discord.SelectOption(
+                    label="2H Slashing",
+                    value="2H Slashing"
+                ),
+                discord.SelectOption(
+                    label="Hand to Hand",
+                    value="Hand to Hand"
+                ),
+            ]
+
             self.skill_use_select.disabled = False
             self.skill_use_select.placeholder = "⚔️ Select Skill Use (optional)..."
-        else:
-            # Clear Skill Use if the selected slot does not support it.
-            self.skill_use = None
-            self.skill_use_select.disabled = True
-            self.skill_use_select.placeholder = "⚔️ Skill Use (select Primary, Secondary, or Range first)..."
 
-            # Clear any previous Skill Use selection.
+        elif self.slot == "Secondary":
+
+            self.skill_use_select.options = [
+                discord.SelectOption(
+                    label="1H Bludgeoning",
+                    value="1H Bludgeoning"
+                ),
+                discord.SelectOption(
+                    label="1H Piercing",
+                    value="1H Piercing"
+                ),
+                discord.SelectOption(
+                    label="1H Slashing",
+                    value="1H Slashing"
+                ),
+                discord.SelectOption(
+                    label="Hand to Hand",
+                    value="Hand to Hand"
+                ),
+            ]
+
+            self.skill_use_select.disabled = False
+            self.skill_use_select.placeholder = "⚔️ Select Skill Use (optional)..."
+
+        elif self.slot == "Range":
+
+            self.skill_use_select.options = [
+                discord.SelectOption(
+                    label="Archery",
+                    value="Archery"
+                ),
+                discord.SelectOption(
+                    label="Throwing",
+                    value="Throwing"
+                ),
+            ]
+
+            self.skill_use_select.disabled = False
+            self.skill_use_select.placeholder = "⚔️ Select Skill Use (optional)..."
+
+        else:
+
+            self.skill_use_select.options = [
+                discord.SelectOption(
+                    label="Select a Slot first",
+                    value="disabled"
+                )
+            ]
+
+            self.skill_use_select.disabled = True
+            self.skill_use_select.placeholder = (
+                "⚔️ Skill Use (select Primary, Secondary, or Range first)..."
+            )
+
+        await interaction.response.edit_message(view=self)
+      
+
+    async def select_skill_use(self, interaction: discord.Interaction):
+        if self.skill_use_select.values:
+            self.skill_use = self.skill_use_select.values[0]
+
+            # Keep the selected Skill Use highlighted.
             for option in self.skill_use_select.options:
-                option.default = False
+                option.default = (option.value == self.skill_use)
+        else:
+            self.skill_use = None
 
         await interaction.response.edit_message(view=self)
 
-    async def select_skill_use(self, interaction: discord.Interaction):
-        self.skill_use = (
-            self.skill_use_select.values[0]
-            if self.skill_use_select.values
+
+  
+
+    async def select_stat(self, interaction: discord.Interaction):
+        self.stat = (
+            self.stat_select.values[0]
+            if self.stat_select.values
             else None
         )
 
-        await interaction.response.defer()
+        # Keep the selected Stat highlighted.
+        for option in self.stat_select.options:
+            option.default = (option.value == self.stat)
 
-    async def select_stat(self, interaction: discord.Interaction):
-        self.stat = self.stat_select.values[0] if self.stat_select.values else None
-        await interaction.response.defer()
+        await interaction.response.edit_message(view=self)
+
+  
         
     async def select_classes(self, interaction: discord.Interaction):
-        self.classes = self.classes_select.values[0] if self.classes_select.values else None
-        await interaction.response.defer()
+        self.classes = (
+            self.classes_select.values[0]
+            if self.classes_select.values
+            else None
+        )
+
+        # Keep the selected Class highlighted.
+        for option in self.classes_select.options:
+            option.default = (option.value == self.classes)
+
+        await interaction.response.edit_message(view=self)
+
+  
     
    
     async def confirm_selection(self, interaction: discord.Interaction):
