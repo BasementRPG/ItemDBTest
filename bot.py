@@ -5115,14 +5115,16 @@ class SpellsSelectionView(View):
         # SEND PRIVATELY
         # ----------------------------------------------------
 
-        private_button = Button(
-            label="Send Privately",
-            style=discord.ButtonStyle.primary
-        )
-
-        async def private_callback(
-            interaction: Interaction
-        ):
+        if self.public:
+        
+            private_button = Button(
+                label="Send Privately",
+                style=discord.ButtonStyle.primary
+            )
+        
+            async def private_callback(
+                interaction: Interaction
+            ):
 
             if not self.selected_class:
 
@@ -5181,12 +5183,20 @@ class SpellsSelectionView(View):
     # ========================================================
 
     def get_content(self):
-
+    
+        if self.public:
+    
+            return (
+                "📖 **Spells & Abilities**\n\n"
+                "Select a class and level range, then choose "
+                "**View** to post the results publicly or "
+                "**Send Privately** to receive them privately."
+            )
+    
         return (
             "📖 **Spells & Abilities**\n\n"
             "Select a class and level range, then choose "
-            "**View** to post the results publicly or "
-            "**Send Privately** to receive them privately."
+            "**View** to display the results."
         )
 
 
@@ -5648,24 +5658,19 @@ class SpellsResultsView(View):
             # ------------------------------------------------
 
             else:
-
+            
                 class_name = SPELL_CLASS_NAMES.get(
                     self.class_code,
                     self.class_code
                 )
-
-                embed = discord.Embed(
-                    title=(
-                        f"📖 {class_name} "
-                        f"Spells & Abilities"
-                    ),
-                    description=(
-                        "Select a level range."
-                    )
+            
+                content = (
+                    f"📖 **{class_name} Spells & Abilities**\n\n"
+                    "Select a level range."
                 )
-
+            
                 await interaction.response.edit_message(
-                    content=embed,
+                    content=content,
                     embed=None,
                     view=SpellsPrivateLevelView(
                         self.class_code
