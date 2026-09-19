@@ -387,17 +387,15 @@ class ItemNameStartView(discord.ui.View):
 # Item Name Check Modal
 # ============================================================
 
-class ItemNameCheckModal(discord.ui.Modal, title="Add New Item"):
+class ItemNameCheckModal(discord.ui.Modal, title="Add Item to Database"):
     def __init__(
         self,
         db_pool,
         guild_id,
         added_by,
-        item_image_url,
-        npc_image_url,
-        item_msg_id,
-        npc_msg_id,
-        upload_channel_id
+        item_image,
+        npc_image,
+        upload_channel_id=None
     ):
         super().__init__(timeout=900)
 
@@ -405,15 +403,15 @@ class ItemNameCheckModal(discord.ui.Modal, title="Add New Item"):
         self.guild_id = guild_id
         self.added_by = added_by
 
-        self.item_image_url = item_image_url
-        self.npc_image_url = npc_image_url
-        self.item_msg_id = item_msg_id
-        self.npc_msg_id = npc_msg_id
+        # Keep the original uploaded attachments so they can be
+        # uploaded to item-database-upload-log after the name check.
+        self.item_image_attachment = item_image
+        self.npc_image_attachment = npc_image
         self.upload_channel_id = upload_channel_id
 
         self.item_name = discord.ui.TextInput(
             label="Item Name",
-            placeholder="Enter the exact item name",
+            placeholder="Example: Flowing Black Silk Sash",
             required=True,
             max_length=100
         )
@@ -421,327 +419,274 @@ class ItemNameCheckModal(discord.ui.Modal, title="Add New Item"):
         self.add_item(self.item_name)
 
     async def _delete_uploads(self, interaction: discord.Interaction):
-        """Best-effort delete of uploaded item/NPC images."""
-        try:
-            channel = (
-                interaction.client.get_channel(self.upload_channel_id)
-                or await interaction.client.fetch_channel(self.upload_channel_id)
+        """Best-effort cleanup of uploaded item/NPC images."""
+        return
+
+    async def _upload_images(self, interaction: discord.Interaction):
+        """Upload the item/NPC images to the hidden upload channel."""
+
+        guild = interaction.guild
+
+        upload_channel = None
+
+        if self.upload_channel_id:
+            try:
+                upload_channel = (
+                    interaction.client.get_channel(self.upload_channel_id)
+                    or await interaction.client.fetch_channel(self.upload_channel_id)
+                )
+            except Exception:
+                upload_channel = None
+
+        if upload_channel is None:
+            upload_channel = await ensure_upload_channel1(guild)
+
+        item_msg = await upload_channel.send(
+            file=await self.item_image_attachment.to_file(),
+            content=f"📦 Uploaded item image by {interaction.user.mention}"
+        )
+
+        npc_msg = None
+
+        if self.npc_image_attachment:
+            npc_msg = await upload_channel.send(
+                file=await self.npc_image_attachment.to_file(),
+                content=f"👹 Uploaded NPC image by {interaction.user.mention}"
             )
 
-            if self.item_msg_id:
-                try:
-                    msg = await channel.fetch_message(self.item_msg_id)
-                    await msg.delete()
-                except Exception:
-                    pass
+        item_url = item_msg.attachments[0].url
+        npc_url = npc_msg.attachments[0].url if npc_msg else ""
 
-            if self.npc_msg_id:
-                try:
-                    msg = await channel.fetch_message(self.npc_msg_id)
-                    await msg.delete()
-                except Exception:
-                    pass
-
-        except Exception:
-            pass
+        return (
+            upload_channel,
+            item_msg,
+            npc_msg,
+            item_url,
+            npc_url,
+            item_msg.id,
+            npc_msg.id if npc_msg else None
+        )
 
     async def on_submit(self, interaction: discord.Interaction):
 
-        # ----------------------------------------------------
-        # Clean item name
-        # ----------------------------------------------------
         item_name = self.item_name.value.strip()
 
         if not item_name:
             await interaction.response.send_message(
-                "❌ Item name is required.",
+                "❌ Please enter an item name.",
                 ephemeral=True
             )
             return
 
-        # ----------------------------------------------------
-        # STEP 1 — Check database
-        # ----------------------------------------------------
-        try:
-            async with self.db_pool.acquire() as conn:
+        # ============================================================
+        # 1. CHECK DATABASE FIRST
+        # ============================================================
 
-                existing = await conn.fetchrow(
-                    """
-                    SELECT id, item_name
-                    FROM item_database
-                    WHERE guild_id = $1
-                      AND LOWER(TRIM(item_name)) = LOWER(TRIM($2))
-                    LIMIT 1
-                    """,
-                    self.guild_id,
-                    item_name
-                )
+        try:
+            existing_item = await self.db_pool.fetchrow(
+                """
+                SELECT id, item_name
+                FROM item_database
+                WHERE (guild_id = $1 OR guild_id IS NULL)
+                  AND LOWER(TRIM(item_name)) = LOWER(TRIM($2))
+                LIMIT 1
+                """,
+                self.guild_id,
+                item_name
+            )
 
         except Exception as e:
             print(f"❌ Item name database check failed: {e}")
 
             await interaction.response.send_message(
-                "❌ I couldn't check the item database right now. "
-                "Please try again.",
+                "❌ I couldn't check the item database. Please try again.",
                 ephemeral=True
             )
             return
 
-        # ----------------------------------------------------
-        # Item already exists
-        # ----------------------------------------------------
-        if existing:
+        # ============================================================
+        # ITEM ALREADY EXISTS
+        # ============================================================
+
+        if existing_item:
+
             await interaction.response.send_message(
                 (
-                    f"❌ **Item already exists.**\n\n"
-                    f"**{existing['item_name']}** is already in the "
-                    f"item database.\n\n"
-                    f"Please use `/edit_item_db` for existing items."
+                    f"❌ **{existing_item['item_name']}** already exists in the database.\n\n"
+                    "Please use `/edit_item_db` for existing items."
                 ),
                 ephemeral=True
             )
             return
 
-        # ----------------------------------------------------
-        # STEP 2 — Go directly to Wiki item page
-        # ----------------------------------------------------
-        wiki_base = "https://monstersandmemories.miraheze.org/wiki"
+        # ============================================================
+        # 2. ITEM NOT IN DATABASE
+        #    CHECK THE WIKI
+        # ============================================================
 
-        wiki_item_name = item_name.replace(" ", "_")
-
-        wiki_url = f"{wiki_base}/{wiki_item_name}"
-
-        print("")
-        print("=" * 70)
-        print(f"🌐 Checking Wiki for item: {item_name}")
-        print(f"🌐 Wiki URL: {wiki_url}")
-        print("=" * 70)
-
-        headers = {
-            "User-Agent": (
-                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-                "AppleWebKit/537.36 (KHTML, like Gecko) "
-                "Chrome/138.0.0.0 Safari/537.36"
-            ),
-            "Accept": (
-                "text/html,application/xhtml+xml,"
-                "application/xml;q=0.9,image/avif,image/webp,"
-                "*/*;q=0.8"
-            ),
-            "Accept-Language": "en-US,en;q=0.9",
-            "Referer": (
-                "https://monstersandmemories.miraheze.org/"
-            ),
-        }
-
-        timeout = aiohttp.ClientTimeout(total=30)
+        base_url = "https://monstersandmemories.miraheze.org/wiki"
+        wiki_url = f"{base_url}/{item_name.replace(' ', '_')}"
 
         wiki_found = False
         wiki_html = None
 
         try:
-            async with aiohttp.ClientSession(
-                headers=headers,
-                timeout=timeout
-            ) as session:
+            headers = {
+                "User-Agent": "Mozilla/5.0"
+            }
+
+            async with aiohttp.ClientSession(headers=headers) as session:
 
                 async with session.get(
                     wiki_url,
-                    allow_redirects=True,
-                    ssl=False
-                ) as response:
+                    timeout=aiohttp.ClientTimeout(total=20)
+                ) as resp:
 
-                    print(
-                        f"🌐 Wiki HTTP status: {response.status}"
-                    )
+                    if resp.status == 200:
 
-                    if response.status == 200:
+                        wiki_html = await resp.text()
 
-                        wiki_html = await response.text(
-                            errors="ignore"
+                        soup = BeautifulSoup(
+                            wiki_html,
+                            "html.parser"
                         )
 
-                        if wiki_html and len(wiki_html) >= 1000:
+                        # Make sure this is an actual Wiki article
+                        # and not a MediaWiki missing-page response.
+                        heading = soup.find(
+                            "h1",
+                            id="firstHeading"
+                        )
 
-                            soup = BeautifulSoup(
-                                wiki_html,
-                                "html.parser"
+                        if heading:
+                            wiki_title = heading.get_text(
+                                strip=True
                             )
 
-                            # ------------------------------------------------
-                            # Confirm that this is a real Wiki article.
-                            # ------------------------------------------------
-                            page_title = soup.find(
-                                "h1",
-                                id="firstHeading"
-                            )
+                            if wiki_title.lower() == item_name.lower():
+                                wiki_found = True
+
+                        # Fallback check using page title.
+                        if not wiki_found:
+
+                            page_title = soup.find("title")
 
                             if page_title:
-
-                                actual_title = page_title.get_text(
-                                    " ",
+                                title_text = page_title.get_text(
                                     strip=True
                                 )
 
-                                print(
-                                    f"📖 Wiki page title: {actual_title}"
-                                )
+                                title_text = title_text.split(
+                                    " - Monsters and Memories Wiki"
+                                )[0].strip()
 
-                                if (
-                                    actual_title.strip().lower()
-                                    == item_name.strip().lower()
-                                ):
+                                if title_text.lower() == item_name.lower():
                                     wiki_found = True
 
-                            # Fallback to HTML title
-                            if not wiki_found:
-
-                                html_title = soup.find("title")
-
-                                if html_title:
-
-                                    title_text = html_title.get_text(
-                                        " ",
-                                        strip=True
-                                    )
-
-                                    print(
-                                        f"📖 Wiki HTML title: {title_text}"
-                                    )
-
-                                    if (
-                                        item_name.strip().lower()
-                                        in title_text.lower()
-                                        and
-                                        "does not exist"
-                                        not in title_text.lower()
-                                    ):
-                                        wiki_found = True
-
         except Exception as e:
+            print(f"⚠️ Wiki check failed for '{item_name}': {e}")
 
-            print(
-                f"⚠️ Wiki lookup failed: {e}"
-            )
+        # ============================================================
+        # 3. WIKI ITEM FOUND
+        # ============================================================
 
-            await interaction.response.send_message(
-                (
-                    "⚠️ I couldn't check the Monsters & Memories "
-                    "Wiki right now.\n\n"
-                    "Please try again in a moment."
-                ),
-                ephemeral=True
-            )
-
-            return
-
-        # ----------------------------------------------------
-        # STEP 3 — Wiki item found
-        #
-        # We are NOT scraping/populating the database yet.
-        # That will be the next step.
-        # ----------------------------------------------------
         if wiki_found:
 
-            print(
-                f"✅ Wiki item found: {item_name}"
-            )
-
             await interaction.response.send_message(
                 (
-                    f"📖 **Wiki Item Found!**\n\n"
-                    f"**{item_name}** exists on the "
-                    f"Monsters & Memories Wiki.\n\n"
-                    f"🔗 [View Wiki Page]({wiki_url})\n\n"
-                    f"**Wiki data review will be added next.**"
+                    f"📖 **{item_name}** was found on the Wiki.\n\n"
+                    f"[Open Wiki Page]({wiki_url})\n\n"
+                    "The Wiki information will be shown for review next."
                 ),
                 ephemeral=True
             )
 
+            # --------------------------------------------------------
+            # NEXT STEP:
+            # Build the Wiki review screen here.
+            # --------------------------------------------------------
+
             return
 
-        # ----------------------------------------------------
-        # STEP 4 — Wiki item NOT found
-        #
-        # Continue with the EXISTING creation process.
-        # ----------------------------------------------------
-        print(
-            f"ℹ️ Item not found on Wiki: {item_name}"
-        )
+        # ============================================================
+        # 4. NOT IN DATABASE AND NOT ON WIKI
+        #    CONTINUE WITH EXISTING MANUAL ADD FLOW
+        # ============================================================
 
         try:
+
+            (
+                upload_channel,
+                item_msg,
+                npc_msg,
+                item_url,
+                npc_url,
+                item_msg_id,
+                npc_msg_id
+            ) = await self._upload_images(interaction)
 
             view = SlotStatClassSelectView(
                 db_pool=self.db_pool,
                 guild_id=self.guild_id,
                 added_by=self.added_by,
-                item_image_url=self.item_image_url,
-                npc_image_url=self.npc_image_url,
-                item_msg_id=self.item_msg_id,
-                npc_msg_id=self.npc_msg_id,
-                upload_channel_id=self.upload_channel_id
+                item_image_url=item_url,
+                npc_image_url=npc_url if npc_msg else None,
+                item_msg_id=item_msg_id,
+                npc_msg_id=npc_msg_id if npc_msg else None,
+                upload_channel_id=upload_channel.id
             )
 
-            sent = await interaction.response.send_message(
+            # Store the item name so the next stage can use it.
+            view.item_name_from_check = item_name
+
+            await interaction.response.send_message(
                 (
-                    f"❌ **{item_name}** was not found on the Wiki.\n\n"
-                    "Select the **Slot**, **Classes**, and **Stats** "
-                    "for this item:"
+                    "❌ The item was not found on the Wiki.\n\n"
+                    "Continue with the manual item entry:"
                 ),
                 view=view,
                 ephemeral=True
             )
 
-            view.origin_message = sent
+            # Get the actual message because send_message()
+            # does not return the Message object.
+            view.origin_message = await interaction.original_response()
+
+        except discord.Forbidden:
+            await interaction.response.send_message(
+                "❌ I don't have permission to upload files here.",
+                ephemeral=True
+            )
 
         except Exception as e:
 
-            print(
-                f"❌ Failed to open existing item creation flow: {e}"
-            )
+            print(f"❌ Image upload failed after item-name check: {e}")
 
-            try:
-                if interaction.response.is_done():
-                    await interaction.followup.send(
-                        "❌ I couldn't open the item creation form.",
-                        ephemeral=True
-                    )
-                else:
-                    await interaction.response.send_message(
-                        "❌ I couldn't open the item creation form.",
-                        ephemeral=True
-                    )
-            except Exception:
-                pass
+            await interaction.response.send_message(
+                f"❌ Upload failed: {e}",
+                ephemeral=True
+            )
 
     async def on_error(
         self,
         interaction: discord.Interaction,
         error: Exception
     ):
-        print(
-            f"❌ ItemNameCheckModal error: {error}"
-        )
+        print(f"❌ ItemNameCheckModal error: {error}")
 
         try:
-            if interaction.response.is_done():
-
-                await interaction.followup.send(
-                    "❌ Something went wrong while checking the item name.",
-                    ephemeral=True
-                )
-
-            else:
-
+            if not interaction.response.is_done():
                 await interaction.response.send_message(
                     "❌ Something went wrong while checking the item name.",
                     ephemeral=True
                 )
-
-        except Exception:
-            pass
-
-
+            else:
+                await interaction.followup.send(
+                    "❌ Something went wrong while checking the item name.",
+                    ephemeral=True
+                )
+        except Exception as e:
+            print(f"⚠️ Error handler failed: {e}")
 
 
 
@@ -1040,86 +985,49 @@ async def clear_wiki_cache(interaction: discord.Interaction):
     item_image="Upload item image",
     npc_image="Upload NPC image (optional)"
 )
-async def add_item_db(interaction: discord.Interaction, item_image: discord.Attachment, npc_image: Optional[discord.Attachment] = None):
-    """Uploads images and opens dropdown view for slot/race/class before modal."""
-    await interaction.response.defer(ephemeral=True, thinking=True)
-    
+async def add_item_db(
+    interaction: discord.Interaction,
+    item_image: discord.Attachment,
+    npc_image: Optional[discord.Attachment] = None
+):
+    """Start the new item workflow by immediately asking for the item name."""
+
     if not item_image:
-        await interaction.edit_original_response(content=f"❌ Item image is required.",view=None)
+        await interaction.response.send_message(
+            "❌ Item image is required.",
+            ephemeral=True
+        )
         return
 
     added_by = str(interaction.user)
     guild = interaction.guild
-    upload_channel = await ensure_upload_channel1(guild)
 
+    # We don't defer here because the next response must be the modal.
+    # The images are passed into the modal and uploaded after the
+    # item-name/database/wiki checks.
     try:
-        # Upload images to the designated channel
-        item_msg = await upload_channel.send(
-            file=await item_image.to_file(),
-            content=f"📦 Uploaded item image by {interaction.user.mention}"
-        )
 
-        npc_msg = None
-        if npc_image:
-            npc_msg = await upload_channel.send(
-                file=await npc_image.to_file(),
-                content=f"👹 Uploaded NPC image by {interaction.user.mention}"
+        upload_channel = await ensure_upload_channel1(guild)
+
+        await interaction.response.send_modal(
+            ItemNameCheckModal(
+                db_pool=db_pool,
+                guild_id=guild.id,
+                added_by=added_by,
+                item_image=item_image,
+                npc_image=npc_image,
+                upload_channel_id=upload_channel.id
             )
-
-
-    
-        # Extract URLs and message IDs for later
-        item_url = item_msg.attachments[0].url
-        npc_url = npc_msg.attachments[0].url if npc_msg else ""
-        item_msg_id = item_msg.id
-        npc_msg_id = npc_msg.id if npc_msg else None
-
-      
-        # ============================================================
-        # Step 1 — Ask for Item Name before Slot/Class/Stats
-        # ============================================================
-        
-        view = ItemNameStartView(
-            db_pool=db_pool,
-            guild_id=guild.id,
-            added_by=added_by,
-            item_image_url=item_url,
-            npc_image_url=npc_url if npc_msg else None,
-            item_msg_id=item_msg_id,
-            npc_msg_id=npc_msg_id if npc_msg else None,
-            upload_channel_id=upload_channel.id
         )
-        
-        sent = await interaction.followup.send(
-            (
-                "Before adding the item, let's check whether it already "
-                "exists in the database or on the Wiki.\n\n"
-                "Click **📝 Enter Item Name** to continue."
-            ),
-            view=view,
-            ephemeral=True
-        )
-        
-        view.origin_message = sent
-
-    
-    except discord.Forbidden:
-        await interaction.edit_original_response(content=f"❌ I don't have permission to upload files here.",view=None)
-        return
 
     except Exception as e:
-        # 🧹 Cleanup uploaded messages on error
-        try:
-            if upload_channel:
-                for msg_id in (locals().get("item_msg", None), locals().get("npc_msg", None)):
-                    if msg_id and isinstance(msg_id, discord.Message):
-                        await msg_id.delete()
-        except Exception as cleanup_err:
-            print(f"⚠️ Cleanup failed after upload error: {cleanup_err}")
+        print(f"❌ Could not open Item Name modal: {e}")
 
-        await interaction.edit_original_response(content=f"❌ Upload failed: {e}",view=None)
-        return
-
+        if not interaction.response.is_done():
+            await interaction.response.send_message(
+                f"❌ Could not start the item entry: {e}",
+                ephemeral=True
+            )
 
 
 
