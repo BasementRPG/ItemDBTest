@@ -1803,7 +1803,7 @@ async def fetch_wiki_items(slot_name: str):
             # Fetch individual item pages
             # =================================================
 
-            for link in links[:25]:
+            for link in links:
 
                 href = link.get("href")
 
