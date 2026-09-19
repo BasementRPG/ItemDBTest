@@ -77,7 +77,7 @@ async def help_itemdb(interaction: discord.Interaction):
             "• Previous / Next page buttons\n"
             "• Back to filters\n"
             "• Item dropdown → sends details privately\n"
-            "• All links point to the Wiki (zones, NPCs, quests, tradeskills, recipes)\n\n"
+            "• All links point to the Wiki (zones, NPCs)\n\n"
              
             "📜 **Add Items**\n"
             "`/add_item_db`\n"
@@ -96,8 +96,6 @@ async def help_itemdb(interaction: discord.Interaction):
             "• Replace item/NPC images only\n"
             "• Enter name → upload new image\n\n"
 
-            "🔧 **Recipe Icons:**\n\n"
-            "⚒️ Crafted 💀 Dropped 💰 Bought ⛏️ Mined"
         ),
         inline=False
     )
@@ -952,7 +950,8 @@ async def run_item_db(
     type_filter:Optional[str] = "with_stats",
     search_query = None,
     source_command="db",
-    show_search = True
+    show_search = True,
+    skill_use: Optional[str] = None
 ):
     try:
         await interaction.response.defer(thinking=True)
@@ -977,18 +976,47 @@ async def run_item_db(
         where_clauses.append("(item_name ILIKE $%d OR npc_name ILIKE $%d OR zone_name ILIKE $%d)" % (len(params)+1, len(params)+2, len(params)+3))
         params.extend([f"%{search_query}%", f"%{search_query}%", f"%{search_query}%"])
 
-    if slot:
-      # Special handling for Primary / Secondary / Range to search item_stats instead
-      slot_lower = slot.lower()
-      if slot_lower in ("primary", "secondary", "range"):
+  
+    # Skill Use filtering
+    # Skill Use only applies to Primary, Secondary, and Range.
+    if skill_use and slot and slot.lower() in ("primary", "secondary", "range"):
 
-          where_clauses.append("(item_stats ILIKE $%d OR item_slot ILIKE $%d OR item_slot ILIKE $%d)" % (len(params)+1, len(params)+2, len(params)+3))
-          params.append(f"%{slot}%")
-          params.append(f"%{slot}%")
-          params.append(f"%{slot}%")
-      else:
-          where_clauses.append("LOWER(item_slot) = LOWER($%d)" % (len(params)+1))
-          params.append(slot)
+        skill_patterns = {
+            "1H Bludgeoning": ["BLD"],
+            "2H Bludgeoning": ["BLD"],
+            "1H Piercing": ["PRC"],
+            "2H Piercing": ["PRC"],
+            "1H Slashing": ["SLH"],
+            "2H Slashing": ["SLH"],
+            "Archery": ["Archery"],
+            "Instrument": ["Instrument"],
+            "Hand to Hand": ["Hand to Hand"],
+            "Throwing": ["Throwing"],
+        }
+
+        skill_terms = skill_patterns.get(skill_use, [])
+
+        if skill_terms:
+            skill_conditions = []
+
+            for term in skill_terms:
+                param_num = len(params) + 1
+                skill_conditions.append(
+                    f"item_stats ILIKE ${param_num}"
+                )
+                params.append(f"%{term}%")
+
+            where_clauses.append(
+                "(" + " OR ".join(skill_conditions) + ")"
+            )
+
+        # 2H skills must also contain "Two Handed".
+        if skill_use.startswith("2H "):
+            param_num = len(params) + 1
+            where_clauses.append(
+                f"item_stats ILIKE ${param_num}"
+            )
+            params.append("%Two Handed%")
 
 
     # Only this guild and global entries
@@ -2569,6 +2597,7 @@ class WikiSelectView(discord.ui.View):
         self.stat: Optional[str] = None
         self.classes: Optional[str] = None
         self.ephermeral = ephemeral
+        self.skill_use: Optional[str] = None
 
         
         # Slot dropdown
@@ -2596,16 +2625,33 @@ class WikiSelectView(discord.ui.View):
                 discord.SelectOption(label="Shoulders", value="Shoulders"),
                 discord.SelectOption(label="Waist", value="Waist"),
                 discord.SelectOption(label="Wrist", value="Wrist"),
+
+            ]
+        )
+        self.slot_select.callback = self.select_slot
+        self.add_item(self.slot_select)
+
+              # Skill Use dropdown
+        self.skill_use_select = discord.ui.Select(
+            placeholder="⚔️ Skill Use (select Primary, Secondary, or Range first)...",
+            min_values=0,
+            max_values=1,
+            disabled=True,
+            options=[
                 discord.SelectOption(label="1H Bludgeoning", value="1H Bludgeoning"),
                 discord.SelectOption(label="2H Bludgeoning", value="2H Bludgeoning"),
                 discord.SelectOption(label="1H Piercing", value="1H Piercing"),
                 discord.SelectOption(label="2H Piercing", value="2H Piercing"),
                 discord.SelectOption(label="1H Slashing", value="1H Slashing"),
                 discord.SelectOption(label="2H Slashing", value="2H Slashing"),
+                discord.SelectOption(label="Archery", value="Archery"),
+                discord.SelectOption(label="Instrument", value="Instrument"),
+                discord.SelectOption(label="Hand to Hand", value="Hand to Hand"),
+                discord.SelectOption(label="Throwing", value="Throwing"),
             ]
         )
-        self.slot_select.callback = self.select_slot
-        self.add_item(self.slot_select)
+        self.skill_use_select.callback = self.select_skill_use
+        self.add_item(self.skill_use_select)
 
         # Stat dropdown
         self.stat_select = discord.ui.Select(
@@ -2683,8 +2729,33 @@ class WikiSelectView(discord.ui.View):
 
         self.value = None
 
+
     async def select_slot(self, interaction: discord.Interaction):
         self.slot = self.slot_select.values[0]
+
+        # Skill Use is only available for Primary, Secondary, and Range.
+        if self.slot in ("Primary", "Secondary", "Range"):
+            self.skill_use_select.disabled = False
+            self.skill_use_select.placeholder = "⚔️ Select Skill Use (optional)..."
+        else:
+            # Clear Skill Use if the selected slot does not support it.
+            self.skill_use = None
+            self.skill_use_select.disabled = True
+            self.skill_use_select.placeholder = "⚔️ Skill Use (select Primary, Secondary, or Range first)..."
+
+            # Clear any previous Skill Use selection.
+            for option in self.skill_use_select.options:
+                option.default = False
+
+        await interaction.response.edit_message(view=self)
+
+      async def select_skill_use(self, interaction: discord.Interaction):
+        self.skill_use = (
+            self.skill_use_select.values[0]
+            if self.skill_use_select.values
+            else None
+        )
+
         await interaction.response.defer()
 
     async def select_stat(self, interaction: discord.Interaction):
@@ -2718,7 +2789,9 @@ class WikiSelectView(discord.ui.View):
                 self.classes,
                 getattr(self, "type_filter", "with_stats"),
                 search_query,
-                self.source_command,  # source_command param
+                self.source_command,
+                True,
+                self.skill_use
               
             )
 
