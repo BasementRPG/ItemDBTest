@@ -1794,7 +1794,7 @@ class ItemNameCheckModal(discord.ui.Modal, title="Add Item to Database"):
                         npc_image_url=npc_url if npc_msg else None,
                         item_msg_id=item_msg_id,
                         npc_msg_id=npc_msg_id if npc_msg else None,
-                        upload_channel.id
+                        upload_channel_id=upload_channel.id
                     )
         
                     view.item_name_from_check = item_name
