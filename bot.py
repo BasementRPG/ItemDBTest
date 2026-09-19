@@ -4309,24 +4309,24 @@ async def scrape_class_spells(class_code: str):
                     f"{class_name.lower()} spells & abilities",
                 ]
         )
-
+    
     if not abilities_heading:
-
+    
         print(
             f"[SPELLS] Could not find "
-            f"{class_name} Abilities heading"
+            f"{class_name} Spells / Abilities heading"
         )
-
+    
         h1s = soup.find_all(
             "h1"
         )
-
+    
         print(
             f"[SPELLS] Found {len(h1s)} H1 headings:"
         )
-
+    
         for h1 in h1s[:20]:
-
+    
             print(
                 "   ",
                 h1.get("id"),
@@ -4337,11 +4337,11 @@ async def scrape_class_spells(class_code: str):
                     )
                 )
             )
-
+    
         return []
-
+    
     print(
-        f"[SPELLS] Found abilities heading: "
+        f"[SPELLS] Found spells/abilities heading: "
         f"{abilities_heading.get_text(' ', strip=True)}"
     )
 
