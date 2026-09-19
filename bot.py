@@ -997,7 +997,7 @@ class WikiFoundDataView(discord.ui.View):
         super().__init__(timeout=900)
 
         self.item_name = item_name
-        self.wiki_data = wiki_data
+        self.wiki_data = wiki_data or {}
         self.db_pool = db_pool
         self.guild_id = guild_id
         self.added_by = added_by
@@ -1005,106 +1005,278 @@ class WikiFoundDataView(discord.ui.View):
         self.item_image_attachment = item_image_attachment
         self.npc_image_attachment = npc_image_attachment
 
-    async def _continue_to_manual_flow(
+    def _extract_item_slot(self, item_stats):
+        """
+        Extract everything after 'Slot:' from the Wiki item_stats.
+
+        Examples:
+            Slot: SLOT1 SLOT2 SLOT3
+            -> SLOT1 SLOT2 SLOT3
+
+            Slot: PRIMARY SECONDARY RANGE
+            -> PRIMARY SECONDARY RANGE
+        """
+
+        if not item_stats:
+            return ""
+
+        for line in item_stats.splitlines():
+            line = line.strip()
+
+            if line.lower().startswith("slot:"):
+                return line.split(":", 1)[1].strip()
+
+        return ""
+
+    async def _upload_item_image(self, upload_channel, interaction):
+        """Upload the user's item image and return the Discord message."""
+
+        item_msg = await upload_channel.send(
+            file=await self.item_image_attachment.to_file(),
+            content=f"📦 Uploaded item image by {interaction.user.mention}"
+        )
+
+        return item_msg
+
+    async def _upload_npc_image_from_attachment(
         self,
-        interaction: discord.Interaction,
-        use_wiki_data=False
+        upload_channel,
+        interaction
+    ):
+        """Upload the user's supplied NPC image."""
+
+        npc_msg = await upload_channel.send(
+            file=await self.npc_image_attachment.to_file(),
+            content=f"👹 Uploaded NPC image by {interaction.user.mention}"
+        )
+
+        return npc_msg
+
+    async def _upload_npc_image_from_wiki(
+        self,
+        upload_channel,
+        interaction,
+        npc_image_url
     ):
         """
-        Continue into the existing Slot/Class/Stat workflow.
-
-        If use_wiki_data=True, the Wiki information is carried forward
-        to the ItemDatabaseModal.
-
-        If False, the Wiki information is completely ignored.
+        Download the NPC image from the Wiki and upload it to the
+        hidden upload channel so the database can use our stored URL.
         """
 
+        if not npc_image_url:
+            return None
+
         try:
-            # ---------------------------------------------------------
-            # Upload images now.
-            # We intentionally wait until the user chooses how to proceed.
-            # ---------------------------------------------------------
+            headers = {"User-Agent": "Mozilla/5.0"}
 
-            guild = interaction.guild
+            async with aiohttp.ClientSession(headers=headers) as session:
+                async with session.get(
+                    npc_image_url,
+                    timeout=aiohttp.ClientTimeout(total=20)
+                ) as resp:
 
-            upload_channel = await ensure_upload_channel1(guild)
+                    if resp.status != 200:
+                        print(
+                            f"⚠️ Could not download Wiki NPC image. "
+                            f"HTTP {resp.status}"
+                        )
+                        return None
 
-            item_msg = await upload_channel.send(
-                file=await self.item_image_attachment.to_file(),
-                content=f"📦 Uploaded item image by {interaction.user.mention}"
-            )
+                    image_bytes = await resp.read()
 
-            npc_msg = None
+                    if not image_bytes:
+                        return None
 
-            if self.npc_image_attachment:
-                npc_msg = await upload_channel.send(
-                    file=await self.npc_image_attachment.to_file(),
-                    content=f"👹 Uploaded NPC image by {interaction.user.mention}"
-                )
+                    content_type = (
+                        resp.headers.get("Content-Type", "")
+                        .lower()
+                    )
 
-            item_url = item_msg.attachments[0].url
-            npc_url = npc_msg.attachments[0].url if npc_msg else ""
+                    if "jpeg" in content_type or "jpg" in content_type:
+                        filename = "wiki_npc_image.jpg"
+                    elif "webp" in content_type:
+                        filename = "wiki_npc_image.webp"
+                    else:
+                        filename = "wiki_npc_image.png"
 
-            item_msg_id = item_msg.id
-            npc_msg_id = npc_msg.id if npc_msg else None
+                    npc_file = discord.File(
+                        io.BytesIO(image_bytes),
+                        filename=filename
+                    )
 
-            # ---------------------------------------------------------
-            # Create the existing Slot / Class / Stat view
-            # ---------------------------------------------------------
+                    npc_msg = await upload_channel.send(
+                        file=npc_file,
+                        content=(
+                            f"👹 Wiki NPC image uploaded by "
+                            f"{interaction.user.mention}"
+                        )
+                    )
 
-            view = SlotStatClassSelectView(
-                db_pool=self.db_pool,
-                guild_id=self.guild_id,
-                added_by=self.added_by,
-                item_image_url=item_url,
-                npc_image_url=npc_url if npc_msg else None,
-                item_msg_id=item_msg_id,
-                npc_msg_id=npc_msg_id if npc_msg else None,
-                upload_channel_id=upload_channel.id
-            )
-
-            # Preserve the item name that was already checked.
-            view.item_name_from_check = self.item_name
-
-            # If Wiki data was selected, carry it forward.
-            if use_wiki_data:
-                view.wiki_data = self.wiki_data
-            else:
-                # Explicitly make sure no Wiki data is used.
-                view.wiki_data = None
-
-            # ---------------------------------------------------------
-            # Replace the review screen with the normal entry workflow
-            # ---------------------------------------------------------
-
-            await interaction.response.edit_message(
-                content=(
-                    "Select the **Slot**, **Classes**, and **Stats** "
-                    "for this item:"
-                ),
-                embed=None,
-                view=view
-            )
-
-            view.origin_message = await interaction.original_response()
-
-            self.stop()
-
-        except discord.Forbidden:
-            await interaction.response.edit_message(
-                content="❌ I don't have permission to upload files here.",
-                embed=None,
-                view=None
-            )
+                    return npc_msg
 
         except Exception as e:
-            print(f"❌ Failed to continue item workflow: {e}")
+            print(f"⚠️ Failed to upload Wiki NPC image: {e}")
+            return None
 
-            await interaction.response.edit_message(
-                content=f"❌ Failed to continue item entry: {e}",
-                embed=None,
-                view=None
+    async def _save_wiki_data(self, interaction):
+        """Save the gathered Wiki information directly to item_database."""
+
+        wiki_data = self.wiki_data
+
+        item_name = self.item_name
+        item_stats = wiki_data.get("item_stats", "") or ""
+
+        # -----------------------------------------
+        # Extract Slot from item_stats
+        # -----------------------------------------
+
+        item_slot = self._extract_item_slot(item_stats)
+
+        # -----------------------------------------
+        # Get Wiki data
+        # -----------------------------------------
+
+        zone_name = wiki_data.get("zone_name", "") or ""
+        zone_area = wiki_data.get("zone_area", "") or ""
+        npc_name = wiki_data.get("npc_name", "") or ""
+        npc_level = wiki_data.get("npc_level", "") or ""
+
+        quest_name = wiki_data.get("quest_name", "") or ""
+        crafted_name = wiki_data.get("crafted_name", "") or ""
+        crafting_recipe = wiki_data.get("crafting_recipe", "") or ""
+
+        wiki_npc_image = wiki_data.get("npc_image", "") or ""
+
+        upload_channel = await ensure_upload_channel1(
+            interaction.guild
+        )
+
+        # -----------------------------------------
+        # Upload user's item image
+        # -----------------------------------------
+
+        item_msg = await self._upload_item_image(
+            upload_channel,
+            interaction
+        )
+
+        item_image_url = (
+            item_msg.attachments[0].url
+            if item_msg.attachments
+            else ""
+        )
+
+        item_msg_id = item_msg.id
+
+        # -----------------------------------------
+        # NPC image
+        #
+        # User supplied NPC image takes priority.
+        # Otherwise use the Wiki NPC image.
+        # -----------------------------------------
+
+        npc_msg = None
+
+        if self.npc_image_attachment:
+            npc_msg = await self._upload_npc_image_from_attachment(
+                upload_channel,
+                interaction
             )
+
+        elif wiki_npc_image:
+            npc_msg = await self._upload_npc_image_from_wiki(
+                upload_channel,
+                interaction,
+                wiki_npc_image
+            )
+
+        if npc_msg and npc_msg.attachments:
+            npc_image_url = npc_msg.attachments[0].url
+            npc_msg_id = npc_msg.id
+        else:
+            # If the Wiki image could not be uploaded, retain
+            # the Wiki URL rather than losing the information.
+            npc_image_url = wiki_npc_image
+            npc_msg_id = None
+
+        # -----------------------------------------
+        # Insert directly into database
+        # -----------------------------------------
+
+        await self.db_pool.execute(
+            """
+            INSERT INTO item_database (
+                guild_id,
+                item_name,
+                zone_name,
+                zone_area,
+                npc_name,
+                npc_level,
+                item_image,
+                npc_image,
+                item_msg_id,
+                npc_msg_id,
+                item_stats,
+                item_slot,
+                added_by,
+                created_at,
+                quest_name,
+                crafted_name,
+                crafting_recipe
+            )
+            VALUES (
+                $1,
+                $2,
+                $3,
+                $4,
+                $5,
+                $6,
+                $7,
+                $8,
+                $9,
+                $10,
+                $11,
+                $12,
+                $13,
+                NOW(),
+                $14,
+                $15,
+                $16
+            )
+            """,
+            self.guild_id,
+            item_name,
+            zone_name,
+            zone_area,
+            npc_name,
+            npc_level,
+            item_image_url,
+            npc_image_url,
+            item_msg_id,
+            npc_msg_id,
+            item_stats,
+            item_slot,
+            self.added_by,
+            quest_name,
+            crafted_name,
+            crafting_recipe
+        )
+
+        # -----------------------------------------
+        # Finished
+        # -----------------------------------------
+
+       
+        await interaction.edit_original_response(
+            content=(
+                f"✅ **{item_name}** has been added to the item database "
+                
+            ),
+            embed=None,
+            view=None
+        )
+
+        self.stop()
 
     @discord.ui.button(
         label="📖 Use Found Data",
@@ -1115,10 +1287,42 @@ class WikiFoundDataView(discord.ui.View):
         interaction: discord.Interaction,
         button: discord.ui.Button
     ):
-        await self._continue_to_manual_flow(
-            interaction,
-            use_wiki_data=True
-        )
+        try:
+            await interaction.response.defer()
+
+            await self._save_wiki_data(interaction)
+
+        except Exception as e:
+            print(
+                f"❌ Failed to save Wiki data for "
+                f"'{self.item_name}': {e}"
+            )
+
+            if interaction.response.is_done():
+                try:
+                    await interaction.edit_original_response(
+                        content=(
+                            f"❌ Failed to add **{self.item_name}** "
+                            f"to the database.\n\n"
+                            f"Error: `{e}`"
+                        ),
+                        embed=None,
+                        view=self
+                    )
+                except Exception as edit_error:
+                    print(
+                        f"❌ Could not update Wiki data error message: "
+                        f"{edit_error}"
+                    )
+            else:
+                await interaction.response.send_message(
+                    (
+                        f"❌ Failed to add **{self.item_name}** "
+                        f"to the database.\n\n"
+                        f"Error: `{e}`"
+                    ),
+                    ephemeral=True
+                )
 
     @discord.ui.button(
         label="✏️ Manually Enter",
@@ -1129,12 +1333,84 @@ class WikiFoundDataView(discord.ui.View):
         interaction: discord.Interaction,
         button: discord.ui.Button
     ):
-        # IMPORTANT:
-        # This completely ignores the Wiki information.
-        await self._continue_to_manual_flow(
-            interaction,
-            use_wiki_data=False
-        )
+        try:
+            upload_channel = await ensure_upload_channel1(
+                interaction.guild
+            )
+
+            # Upload item image
+            item_msg = await upload_channel.send(
+                file=await self.item_image_attachment.to_file(),
+                content=(
+                    f"📦 Uploaded item image by "
+                    f"{interaction.user.mention}"
+                )
+            )
+
+            # Upload optional NPC image
+            npc_msg = None
+
+            if self.npc_image_attachment:
+                npc_msg = await upload_channel.send(
+                    file=await self.npc_image_attachment.to_file(),
+                    content=(
+                        f"👹 Uploaded NPC image by "
+                        f"{interaction.user.mention}"
+                    )
+                )
+
+            item_url = (
+                item_msg.attachments[0].url
+                if item_msg.attachments
+                else ""
+            )
+
+            npc_url = (
+                npc_msg.attachments[0].url
+                if npc_msg and npc_msg.attachments
+                else ""
+            )
+
+            view = SlotStatClassSelectView(
+                db_pool=self.db_pool,
+                guild_id=self.guild_id,
+                added_by=self.added_by,
+                item_image_url=item_url,
+                npc_image_url=npc_url if npc_msg else None,
+                item_msg_id=item_msg.id,
+                npc_msg_id=npc_msg.id if npc_msg else None,
+                upload_channel_id=upload_channel.id
+            )
+
+            # IMPORTANT:
+            # Manual entry completely ignores the Wiki data.
+            view.item_name_from_check = self.item_name
+            view.wiki_data = None
+
+            await interaction.response.edit_message(
+                content=(
+                    "✏️ Continue with the manual item entry.\n\n"
+                    "Select the **Slot**, **Classes**, and **Stats**:"
+                ),
+                embed=None,
+                view=view
+            )
+
+            view.origin_message = await interaction.original_response()
+
+            self.stop()
+
+        except Exception as e:
+            print(
+                f"❌ Failed to start manual entry for "
+                f"'{self.item_name}': {e}"
+            )
+
+            if not interaction.response.is_done():
+                await interaction.response.send_message(
+                    f"❌ Could not start manual entry: {e}",
+                    ephemeral=True
+                )
 
     @discord.ui.button(
         label="❌ Cancel",
@@ -1440,9 +1716,9 @@ class ItemNameCheckModal(discord.ui.Modal, title="Add Item to Database"):
             # ---------------------------------------------------------
         
             review_embed = discord.Embed(
-                title=f"📖 Wiki Data Found: {item_name}",
+                title=f"📖 Item Data Found: {item_name}",
                 description=(
-                    "The following information was gathered from the Wiki.\n\n"
+                    "The following information was gathered.\n\n"
                     "Choose how you want to continue."
                 ),
                 color=discord.Color.blurple()
