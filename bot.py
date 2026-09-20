@@ -4001,30 +4001,33 @@ async def fetch_wiki_items(slot_name: str):
                         # Then look for <ul><li> list of NPCs
                         npc_list = drops_section.find_next("ul")
 
-                        if npc_list:
-
-                            npc_links = npc_list.find_all("a")
-
-                            if npc_links:
-
-                                npc_name = ", ".join(
-                                    a.get_text(
-                                        strip=True
-                                    )
-                                    for a in npc_links
-                                )
-
+                        if npc_links:
+                        
+                            npc_names = [
+                                a.get_text(strip=True)
+                                for a in npc_links
+                                if a.get_text(strip=True)
+                            ]
+                        
+                            if len(npc_names) > 4:
+                                npc_name = "Trash Mobs"
                             else:
+                                npc_name = ", ".join(npc_names)
 
+                           
+                            else:
+                            
                                 # Fallback: plain text <li>
-                                npc_items = npc_list.find_all("li")
-
-                                npc_name = ", ".join(
-                                    li.get_text(
-                                        strip=True
-                                    )
-                                    for li in npc_items
-                                )
+                                npc_items = [
+                                    li.get_text(strip=True)
+                                    for li in npc_list.find_all("li")
+                                    if li.get_text(strip=True)
+                                ]
+                            
+                                if len(npc_items) > 4:
+                                    npc_name = "Trash Mobs"
+                                else:
+                                    npc_name = ", ".join(npc_items)
 
 
                     # -------------------------------------------------
@@ -5022,9 +5025,13 @@ class ItemSelectMenu(discord.ui.Select):
             # Build full wiki links
             linked_npc = []
             for name in npc_name:
-                # Replace spaces with underscores for proper wiki URL formatting
-                npc_url = linkback + name.replace(" ", "_")
-                linked_npc.append(f"[{name}]({npc_url})")
+                # Trash Mobs is not a real wiki page, so don't make it a link.
+                if name.strip().lower() == "trash mobs":
+                    linked_npc.append(name)
+                else:
+                    # Replace spaces with underscores for proper wiki URL formatting
+                    npc_url = linkback + name.replace(" ", "_")
+                    linked_npc.append(f"[{name}]({npc_url})")
             # Join with newlines for vertical display in embed
             npc_name = " \n ".join(linked_npc)
 
