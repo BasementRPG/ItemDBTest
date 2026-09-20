@@ -5103,6 +5103,7 @@ class UpdateDBView(discord.ui.View):
         )
 
 
+
 class UpdateDBTermModal(discord.ui.Modal, title="Enter Update Term"):
 
     update_term = discord.ui.TextInput(
@@ -5112,55 +5113,40 @@ class UpdateDBTermModal(discord.ui.Modal, title="Enter Update Term"):
         max_length=100
     )
 
-    def __init__(self, original_message):
+    def __init__(self, original_interaction):
         super().__init__()
-        self.original_message = original_message
-
+        self.original_interaction = original_interaction
 
     async def on_submit(self, interaction: discord.Interaction):
-    
+
         term = self.update_term.value.strip()
-    
+
         if not term:
             await interaction.response.send_message(
                 "⚠️ Please enter an update term.",
                 ephemeral=True
             )
             return
-    
+
         update_view = UpdateDBStopView()
-    
-        # Acknowledge the modal submission
+
+        # Acknowledge the modal
         await interaction.response.defer()
-    
-        # Edit the original /update_db menu message
-        try:
-            await self.original_message.edit(
-                content=(
-                    f"🔄 **Updating Database**\n\n"
-                    f"Searching for items matching:\n"
-                    f"**{term}**\n\n"
-                    f"Only matching item names will be checked."
-                ),
-                view=update_view
-            )
-    
-        except discord.NotFound:
-            # If Discord no longer allows the original ephemeral
-            # message to be edited, fall back to a new message.
-            await interaction.followup.send(
-                content=(
-                    f"🔄 **Updating Database**\n\n"
-                    f"Searching for items matching:\n"
-                    f"**{term}**\n\n"
-                    f"Only matching item names will be checked."
-                ),
-                view=update_view,
-                ephemeral=True
-            )
-    
+
+        # Replace the ORIGINAL /update_db message.
+        # Do NOT send a new message.
+        await self.original_interaction.edit_original_response(
+            content=(
+                f"🔄 **Updating Database**\n\n"
+                f"Searching for items matching:\n"
+                f"**{term}**\n\n"
+                f"Only matching item names will be checked."
+            ),
+            view=update_view
+        )
+
         await run_update_db(
-            interaction,
+            self.original_interaction,
             update_term=term,
             update_view=update_view
         )
