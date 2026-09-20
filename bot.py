@@ -5314,6 +5314,36 @@ class UpdateDBView(discord.ui.View):
         )
 
 
+class UpdateDBStopView(discord.ui.View):
+
+    def __init__(self):
+        super().__init__(timeout=None)
+        self.stopped = False
+
+        self.add_item(UpdateDBStopButton(self))
+
+
+class UpdateDBStopButton(discord.ui.Button):
+
+    def __init__(self, parent_view):
+        super().__init__(
+            label="Stop",
+            style=discord.ButtonStyle.danger,
+            emoji="🛑"
+        )
+        self.parent_view = parent_view
+
+    async def callback(self, interaction: discord.Interaction):
+
+        self.parent_view.stopped = True
+
+        await interaction.response.edit_message(
+            content="🛑 **Stopping database update...**\n\nThe update will stop after the current item finishes.",
+            view=None
+        )
+
+
+
 @bot.tree.command(name="update_db", description="Compare existing DB items with the Wiki and update any changed fields.")
 @app_commands.checks.has_permissions(administrator=True)
 async def update_db(interaction: discord.Interaction):
@@ -5335,7 +5365,8 @@ async def run_update_db(
     interaction: discord.Interaction,
     start_letter=None,
     end_letter=None,
-    update_term=None
+    update_term=None,
+    update_view=None
 ):
 
     base_url = "https://monstersandmemories.miraheze.org/wiki"
