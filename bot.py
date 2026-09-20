@@ -2896,6 +2896,22 @@ async def run_item_db(
         slot_lower = str(slot).strip().lower()
         skill_lower = str(skill_use).strip().lower()
 
+        # Skill Use dropdown stores abbreviated values.
+        # Convert them back to the existing search names.
+        skill_use_map = {
+            "blg": "1h bludgeoning",
+            "blg two handed": "2h bludgeoning",
+            "sta": "1h piercing",
+            "sta two handed": "2h piercing",
+            "sla": "1h slashing",
+            "sla two handed": "2h slashing",
+            "h2h": "hand to hand",
+            "arc": "archery",
+            "thr": "throwing"
+        }
+        
+        skill_lower = skill_use_map.get(skill_lower, skill_lower)
+
         # --------------------------------------------------------
         # Primary
         # --------------------------------------------------------
