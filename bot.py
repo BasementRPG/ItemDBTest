@@ -3413,13 +3413,15 @@ async def run_item_db(
                     re.compile(r"\bRanged\s+Haste\b", re.IGNORECASE)
                 ]
 
+            
             elif stat_filter == "instrument":
                 # Instrument items can be any of these instrument types.
+                # Search item_stats for the instrument type followed by a colon.
                 stat_patterns = [
-                    re.compile(r"\bPercussion:\b", re.IGNORECASE),
-                    re.compile(r"\bWind:\b", re.IGNORECASE),
-                    re.compile(r"\bStringed:\b", re.IGNORECASE),
-                    re.compile(r"\bBrass:\b", re.IGNORECASE)
+                    re.compile(r"Brass\s*:", re.IGNORECASE),
+                    re.compile(r"Percussion\s*:", re.IGNORECASE),
+                    re.compile(r"Stringed\s*:", re.IGNORECASE),
+                    re.compile(r"Wind\s*:", re.IGNORECASE)
                 ]
 
             else:
@@ -3459,15 +3461,18 @@ async def run_item_db(
       
           stat_match = True
           if stat_patterns:
-              stat_match = any(p.search(text) for p in stat_patterns)
-      
-              # ❌ Exclude "Skill: STA", "Skill: STR", etc.
-              for p in stat_patterns:
-                  # Safely build a simplified pattern string without word boundaries
-                  simple_pat = p.pattern.replace(r"\b", "")
-                  if re.search(f"Skill:\\s*{simple_pat}", text, re.IGNORECASE):
-                      stat_match = False
-                      break
+            stat_match = any(p.search(text) for p in stat_patterns)
+        
+            # ❌ Exclude weapon Skill: entries from normal stat searches.
+            # Instrument is different because Brass:, Percussion:, Stringed:
+            # and Wind: are actual instrument types, not weapon skills.
+            if stat_filter != "instrument":
+                for p in stat_patterns:
+                    # Safely build a simplified pattern string without word boundaries
+                    simple_pat = p.pattern.replace(r"\b", "")
+                    if re.search(f"Skill:\\s*{simple_pat}", text, re.IGNORECASE):
+                        stat_match = False
+                        break
       
           class_match = any(p.search(text) for p in class_patterns) if class_patterns else True
           return stat_match and class_match
