@@ -5130,6 +5130,7 @@ class UpdateDBTermModal(discord.ui.Modal, title="Enter Update Term"):
     
         update_view = UpdateDBStopView()
     
+        # Send the new updating message first
         await interaction.response.send_message(
             content=(
                 f"🔄 **Updating Database**\n\n"
@@ -5140,6 +5141,12 @@ class UpdateDBTermModal(discord.ui.Modal, title="Enter Update Term"):
             view=update_view,
             ephemeral=True
         )
+    
+        # Remove the original Update Database menu
+        try:
+            await self.original_message.delete()
+        except discord.NotFound:
+            pass
     
         await run_update_db(
             interaction,
