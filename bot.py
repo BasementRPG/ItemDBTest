@@ -5147,6 +5147,7 @@ class UpdateDBTermModal(discord.ui.Modal, title="Enter Update Term"):
 
 
 class UpdateDBAlphabeticalSelect(discord.ui.Select):
+class UpdateDBAlphabeticalSelect(discord.ui.Select):
 
     def __init__(self, parent_view):
 
@@ -5156,27 +5157,32 @@ class UpdateDBAlphabeticalSelect(discord.ui.Select):
             discord.SelectOption(
                 label="A–E",
                 description="Update items beginning with A, B, C, D, or E",
-                value="A-E"
+                value="A-E",
+                default=parent_view.selected_range == "A-E"
             ),
             discord.SelectOption(
                 label="F–J",
                 description="Update items beginning with F, G, H, I, or J",
-                value="F-J"
+                value="F-J",
+                default=parent_view.selected_range == "F-J"
             ),
             discord.SelectOption(
                 label="K–O",
                 description="Update items beginning with K, L, M, N, or O",
-                value="K-O"
+                value="K-O",
+                default=parent_view.selected_range == "K-O"
             ),
             discord.SelectOption(
                 label="P–T",
                 description="Update items beginning with P, Q, R, S, or T",
-                value="P-T"
+                value="P-T",
+                default=parent_view.selected_range == "P-T"
             ),
             discord.SelectOption(
                 label="U–Z",
                 description="Update items beginning with U, V, W, X, Y, or Z",
-                value="U-Z"
+                value="U-Z",
+                default=parent_view.selected_range == "U-Z"
             )
         ]
 
@@ -5187,9 +5193,8 @@ class UpdateDBAlphabeticalSelect(discord.ui.Select):
             max_values=1
         )
 
-
     async def callback(self, interaction: discord.Interaction):
-    
+
         ranges = {
             "A-E": ("A", "E"),
             "F-J": ("F", "J"),
@@ -5197,23 +5202,30 @@ class UpdateDBAlphabeticalSelect(discord.ui.Select):
             "P-T": ("P", "T"),
             "U-Z": ("U", "Z")
         }
-    
+
         selected_range = self.values[0]
-    
+
         start_letter, end_letter = ranges[selected_range]
-    
+
         self.parent_view.selected_range = selected_range
         self.parent_view.start_letter = start_letter
         self.parent_view.end_letter = end_letter
-    
+
+        # Rebuild the dropdown so the selected option remains selected
+        new_view = UpdateDBView(
+            selected_range=selected_range,
+            start_letter=start_letter,
+            end_letter=end_letter
+        )
+
         await interaction.response.edit_message(
             content=(
                 "📚 **Update Database**\n\n"
-                f"Selected section: **{selected_range}**\n\n"
-                "Press **Update** to update this section, "
-                "or **Enter Update Term** to search for a specific item name."
+                "Select the alphabetical section you want to update.\n\n"
+                "You can also use **Enter Update Term** to search for "
+                "a partial item name."
             ),
-            view=self.parent_view
+            view=new_view
         )
 
 
@@ -5277,13 +5289,18 @@ class UpdateDBTermButton(discord.ui.Button):
 
 class UpdateDBView(discord.ui.View):
 
-    def __init__(self):
+    def __init__(
+        self,
+        selected_range=None,
+        start_letter=None,
+        end_letter=None
+    ):
 
         super().__init__(timeout=120)
 
-        self.selected_range = None
-        self.start_letter = None
-        self.end_letter = None
+        self.selected_range = selected_range
+        self.start_letter = start_letter
+        self.end_letter = end_letter
 
         self.add_item(
             UpdateDBAlphabeticalSelect(self)
@@ -5296,8 +5313,6 @@ class UpdateDBView(discord.ui.View):
         self.add_item(
             UpdateDBTermButton()
         )
-
-
 
 
 @bot.tree.command(name="update_db", description="Compare existing DB items with the Wiki and update any changed fields.")
