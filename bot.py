@@ -5793,7 +5793,7 @@ async def run_update_db(
                                         )
 
                                
-                                if len(npc_names) >= 4:
+                                if len(npc_names) >= 3:
                                     wiki_npc_name = "Trash Mobs"
                                 else:
                                     wiki_npc_name = ", ".join(npc_names)
