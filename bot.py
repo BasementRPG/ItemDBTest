@@ -5116,33 +5116,35 @@ class UpdateDBTermModal(discord.ui.Modal, title="Enter Update Term"):
         super().__init__()
         self.original_message = original_message
 
+
     async def on_submit(self, interaction: discord.Interaction):
-
+    
         term = self.update_term.value.strip()
-
+    
         if not term:
             await interaction.response.send_message(
                 "⚠️ Please enter an update term.",
                 ephemeral=True
             )
             return
-
-        await interaction.response.defer()
-
-        # Replace the original Update Database message
-        await self.original_message.edit(
+    
+        update_view = UpdateDBStopView()
+    
+        await interaction.response.send_message(
             content=(
                 f"🔄 **Updating Database**\n\n"
                 f"Searching for items matching:\n"
                 f"**{term}**\n\n"
                 f"Only matching item names will be checked."
             ),
-            view=None
+            view=update_view,
+            ephemeral=True
         )
-
+    
         await run_update_db(
             interaction,
-            update_term=term
+            update_term=term,
+            update_view=update_view
         )
 
 
