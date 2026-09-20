@@ -5101,9 +5101,9 @@ async def update_db(interaction: discord.Interaction):
     view = UpdateDBView()
 
     await interaction.response.send_message(
-        "🔄 **Starting database update...**\n\n"
+        "🔄 **Fetching data, please wait...**\n\n"
         "⏱️ The updater is intentionally spacing requests out "
-        "to avoid Wiki rate limits.",
+        "to avoid rate limits.",
         view=view,
         ephemeral=True
     )
@@ -5135,12 +5135,6 @@ async def run_update_db(
     NPC_REQUEST_DELAY = 0.5
     MAX_RETRIES = 4
 
-    await interaction.followup.send(
-        "🔄 Fetching wiki data, please wait...\n"
-        "⏱️ The updater is intentionally spacing requests out "
-        "to avoid Wiki rate limits.",
-        ephemeral=True
-    )
 
     async def fetch_with_retry(
         session,
@@ -5957,7 +5951,7 @@ async def run_update_db(
                 ):
 
                     print(
-                        f"📊 Wiki update progress: "
+                        f"📊 Update progress: "
                         f"{checked_count}/"
                         f"{total_items}"
                     )
@@ -5967,7 +5961,7 @@ async def run_update_db(
         # =========================================================
 
         summary = (
-            f"✅ Wiki sync complete!\n"
+            f"✅ Sync complete!\n"
             f"🔍 Checked: `{checked_count}` items\n"
             f"🛠️ Updated: `{updated_count}` items\n"
         )
@@ -6014,15 +6008,15 @@ async def run_update_db(
                     f"more failed items."
                 )
 
-        await interaction.followup.send(
-            summary,
-            ephemeral=True
+        await interaction.edit_original_response(
+            content=summary,
+            view=None
         )
 
     except Exception as e:
 
         print(
-            f"❌ Wiki update failed: {e}"
+            f"❌ Update failed: {e}"
         )
 
         import traceback
@@ -6032,7 +6026,7 @@ async def run_update_db(
         try:
 
             await interaction.followup.send(
-                f"❌ Wiki update failed:\n"
+                f"❌ Update failed:\n"
                 f"`{e}`",
                 ephemeral=True
             )
