@@ -3678,7 +3678,12 @@ class WikiView(discord.ui.View):
                 embed.set_image(url=item["item_image"])
             if item["npc_image"] != "":
                 embed.set_thumbnail(url=item["npc_image"])            
-         
+            if item["quest_name"] != "":
+                embed.add_field(
+                    name="🧩 Related Quest",
+                    value=f"[{item['quest_name']}]({quest_link})",
+                    inline=False
+                )
             embed.set_footer(
                 text=f"Page {page_index + 1}/{self.total_pages()} - Total Results: {len(self.items)}"
             )
