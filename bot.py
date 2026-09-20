@@ -3000,10 +3000,15 @@ async def run_item_db(
             # 2H Piercing
             elif skill_lower == "2h piercing":
             
+            
                 where_clauses.append(
                     """
-                    item_stats ILIKE $%d
-                    AND (
+                    (
+                        LOWER(item_slot) = 'primary'
+                        OR item_stats ILIKE $%d
+                    )
+                    AND
+                    (
                         (
                             item_stats ILIKE $%d
                             AND item_stats ILIKE $%d
@@ -3052,10 +3057,15 @@ async def run_item_db(
             # 2H Slashing
             elif skill_lower == "2h slashing":
             
+                
                 where_clauses.append(
                     """
-                    item_stats ILIKE $%d
-                    AND (
+                    (
+                        LOWER(item_slot) = 'primary'
+                        OR item_stats ILIKE $%d
+                    )
+                    AND
+                    (
                         (
                             item_stats ILIKE $%d
                             AND item_stats ILIKE $%d
