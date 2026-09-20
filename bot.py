@@ -5069,184 +5069,918 @@ async def update_db(interaction: discord.Interaction):
     await interaction.response.send_message("🔍 Starting database update from Wiki... this may take a few minutes.", ephemeral=True)
     await run_update_db(interaction)
 
+
 async def run_update_db(interaction: discord.Interaction):
+
     base_url = "https://monstersandmemories.miraheze.org/wiki"
     wiki_base = "https://monstersandmemories.miraheze.org"
+
     updated_count = 0
     checked_count = 0
-    changes_log = []
     failed_items = []
+    changes_log = []
 
-    await interaction.followup.send("🔄 Fetching wiki data, please wait...", ephemeral=True)
+    # ---------------------------------------------------------
+    # Request settings
+    # ---------------------------------------------------------
+
+    REQUEST_DELAY = 1.0
+    NPC_REQUEST_DELAY = 0.5
+    MAX_RETRIES = 4
+
+    await interaction.followup.send(
+        "🔄 Fetching wiki data, please wait...\n"
+        "⏱️ The updater is intentionally spacing requests out "
+        "to avoid Wiki rate limits.",
+        ephemeral=True
+    )
+
+    async def fetch_with_retry(
+        session,
+        url,
+        label="Wiki page"
+    ):
+        """
+        Fetch a Wiki page while handling temporary rate limits
+        and server errors.
+        """
+
+        for attempt in range(MAX_RETRIES):
+
+            try:
+
+                async with session.get(
+                    url,
+                    ssl=False,
+                    timeout=aiohttp.ClientTimeout(total=30)
+                ) as resp:
+
+                    # -----------------------------------------
+                    # Successful request
+                    # -----------------------------------------
+
+                    if resp.status == 200:
+
+                        return await resp.text(
+                            errors="ignore"
+                        )
+
+                    # -----------------------------------------
+                    # Rate limited
+                    # -----------------------------------------
+
+                    if resp.status == 429:
+
+                        retry_after = resp.headers.get(
+                            "Retry-After"
+                        )
+
+                        try:
+                            wait_time = float(
+                                retry_after
+                            )
+                        except (
+                            TypeError,
+                            ValueError
+                        ):
+                            wait_time = (
+                                5 * (attempt + 1)
+                            )
+
+                        wait_time = min(
+                            wait_time,
+                            60
+                        )
+
+                        print(
+                            f"⚠️ Wiki rate limit for "
+                            f"{label}. "
+                            f"Waiting {wait_time:.1f}s..."
+                        )
+
+                        await asyncio.sleep(
+                            wait_time
+                        )
+
+                        continue
+
+                    # -----------------------------------------
+                    # Temporary server error
+                    # -----------------------------------------
+
+                    if resp.status in (
+                        500,
+                        502,
+                        503,
+                        504
+                    ):
+
+                        wait_time = (
+                            3 * (attempt + 1)
+                        )
+
+                        print(
+                            f"⚠️ Wiki HTTP "
+                            f"{resp.status} for "
+                            f"{label}. "
+                            f"Retrying in "
+                            f"{wait_time}s..."
+                        )
+
+                        await asyncio.sleep(
+                            wait_time
+                        )
+
+                        continue
+
+                    # -----------------------------------------
+                    # Permanent failure
+                    # -----------------------------------------
+
+                    print(
+                        f"⚠️ Wiki returned HTTP "
+                        f"{resp.status} for "
+                        f"{label}"
+                    )
+
+                    return None
+
+            except (
+                aiohttp.ClientError,
+                asyncio.TimeoutError
+            ) as e:
+
+                wait_time = (
+                    3 * (attempt + 1)
+                )
+
+                print(
+                    f"⚠️ Request error for "
+                    f"{label}: {e}. "
+                    f"Retrying in "
+                    f"{wait_time}s..."
+                )
+
+                await asyncio.sleep(
+                    wait_time
+                )
+
+        print(
+            f"❌ Failed after "
+            f"{MAX_RETRIES} attempts: "
+            f"{label}"
+        )
+
+        return None
 
     try:
-        async with db_pool.acquire() as conn:
-            db_items = await conn.fetch("""
-                SELECT id, item_name, zone_name, zone_area, npc_name,
-                       item_stats, quest_name, npc_image, npc_level, guild_id
-                FROM item_database
-            """)
 
-        async with aiohttp.ClientSession(headers={"User-Agent": "Mozilla/5.0"}) as session:
+        # -----------------------------------------------------
+        # Get EVERY item from the database
+        # -----------------------------------------------------
+
+        async with db_pool.acquire() as conn:
+
+            db_items = await conn.fetch(
+                """
+                SELECT
+                    id,
+                    item_name,
+                    zone_name,
+                    zone_area,
+                    npc_name,
+                    item_stats,
+                    quest_name,
+                    npc_image,
+                    npc_level,
+                    guild_id
+                FROM item_database
+                ORDER BY id ASC
+                """
+            )
+
+        total_items = len(db_items)
+
+        print(
+            f"🔍 Starting Wiki update for "
+            f"{total_items} database items."
+        )
+
+        # -----------------------------------------------------
+        # Wiki session
+        # -----------------------------------------------------
+
+        headers = {
+            "User-Agent": (
+                "MonstersAndMemoriesDiscordBot/1.0 "
+                "(Wiki database updater)"
+            )
+        }
+
+        async with aiohttp.ClientSession(
+            headers=headers
+        ) as session:
+
             for db_item in db_items:
-                item_name = db_item["item_name"].strip()
-                item_url = f"{base_url}/{item_name.replace(' ', '_')}"
+
+                item_name = (
+                    db_item["item_name"]
+                    or ""
+                ).strip()
+
                 checked_count += 1
 
-                try:
-                    async with session.get(item_url, ssl=False) as resp:
-                        if resp.status != 200:
-                            print(f"⚠️ Skipping missing page: {item_url}")
-                            failed_items.append(item_name)
-                            continue
-                        html = await resp.text()
-                except Exception as e:
-                    print(f"⚠️ Error fetching {item_name}: {e}")
-                    failed_items.append(item_name)
+                if not item_name:
                     continue
 
-                soup = BeautifulSoup(html, "html.parser")
+                print(
+                    f"🔎 [{checked_count}/{total_items}] "
+                    f"Checking {item_name}"
+                )
 
-                # --- Drop Info ---
-                npc_name, zone_name = "", ""
-                if (drops_section := soup.find("h2", id="Drops_From")):
-                    zone_tag = drops_section.find_next("p")
-                    if zone_tag:
-                        zone_name = zone_tag.get_text(strip=True)
+                # -------------------------------------------------
+                # Build item Wiki URL
+                # -------------------------------------------------
 
-                    npc_list = drops_section.find_next("ul")
-                    if npc_list:
-                        npc_links = npc_list.find_all("a")
-                        npc_name = ", ".join(a.get_text(strip=True) for a in npc_links) if npc_links else \
-                                    ", ".join(li.get_text(strip=True) for li in npc_list.find_all("li"))
+                item_url = (
+                    f"{base_url}/"
+                    f"{item_name.replace(' ', '_')}"
+                )
 
+                # -------------------------------------------------
+                # Fetch item page
+                # -------------------------------------------------
 
-                # --- Quest Info ---
-                quest_name = ""
-                
-                quest_section = soup.find("h2", id="Related_quests")
-                
-                if quest_section:
-                    # The Wiki places the actual quest <ul> immediately after
-                    # the heading's mw-heading wrapper.
-                    quest_heading_wrapper = quest_section.parent
-                
-                    if quest_heading_wrapper:
-                        quest_list = quest_heading_wrapper.find_next_sibling()
-                
-                        # Only accept the UL directly following Related quests.
-                        # This prevents Player_crafted's UL from being mistaken
-                        # for a Related Quest.
-                        if quest_list and quest_list.name == "ul":
-                            quest_links = quest_list.find_all("a", href=True)
-                
-                            if quest_links:
-                                quest_names = []
-                
-                                for link in quest_links:
-                                    name = link.get_text(" ", strip=True)
-                
-                                    if name and name not in quest_names:
-                                        quest_names.append(name)
-                
-                                quest_name = ", ".join(quest_names)
-                
-                # Only clear the NPC when there is actually a quest
-                # with the exact same name.
-                if quest_name and npc_name and npc_name.strip().lower() == quest_name.strip().lower():
-                    npc_name = ""
+                html = await fetch_with_retry(
+                    session,
+                    item_url,
+                    f"item: {item_name}"
+                )
 
-                # --- NPC Details ---
-                new_npc_image = ""
-                npc_level = ""
-                if npc_name:
-                    first_npc = npc_name.split(",")[0].strip().replace(" ", "_")
-                    npc_url = f"{wiki_base}/wiki/{first_npc}"
-                    try:
-                        async with session.get(npc_url, ssl=False) as npc_resp:
-                            if npc_resp.status == 200:
-                                npc_html = await npc_resp.text()
-                                npc_soup = BeautifulSoup(npc_html, "html.parser")
+                if not html:
 
-                                file_span = npc_soup.select_one('span[typeof="mw:File"] img')
-                                if file_span:
-                                    src = file_span.get("src", "")
-                                    new_npc_image = f"https:{src}" if src.startswith("//") else src
+                    failed_items.append(
+                        item_name
+                    )
 
-                                mob_stats = npc_soup.find("table", class_="mobStatsBox")
-                                if mob_stats:
-                                    tds = mob_stats.find_all("td")
-                                    if len(tds) >= 3:
-                                        npc_level = tds[2].get_text(strip=True)
-                    except Exception as e:
-                        print(f"⚠️ Failed NPC fetch {npc_url}: {e}")
+                    await asyncio.sleep(
+                        REQUEST_DELAY
+                    )
 
+                    continue
 
+                soup = BeautifulSoup(
+                    html,
+                    "html.parser"
+                )
 
-                   # --- Item Stats ---
-                item_stats_div = soup.find("div", class_="item-stats")
-                item_stats = "None listed"
+                # =================================================
+                # WIKI VALUES
+                # =================================================
+
+                wiki_item_stats = ""
+                wiki_zone_name = ""
+                wiki_npc_name = ""
+                wiki_npc_image = ""
+                wiki_npc_level = ""
+                wiki_quest_name = ""
+
+                # =================================================
+                # ITEM STATS
+                # =================================================
+
+                item_stats_div = soup.find(
+                    "div",
+                    class_="item-stats"
+                )
+
                 if item_stats_div:
-                    lines = [line.strip() for line in item_stats_div.stripped_strings]
-                    item_stats = "\n".join(lines)
-              
-                # --- Swap zone <-> npc if number in zone
-                if any(char.isdigit() for char in zone_name):
-                    npc_name, zone_name = zone_name, ""
 
-                # --- Detect changes ---
+                    lines = [
+                        line.strip()
+                        for line
+                        in item_stats_div.stripped_strings
+                    ]
+
+                    wiki_item_stats = "\n".join(
+                        lines
+                    ).strip()
+
+                # =================================================
+                # DROPS FROM
+                # =================================================
+
+                drops_section = soup.find(
+                    "h2",
+                    id="Drops_From"
+                )
+
+                if drops_section:
+
+                    drops_heading_wrapper = (
+                        drops_section.parent
+                    )
+
+                    if drops_heading_wrapper:
+
+                        current_sibling = (
+                            drops_heading_wrapper
+                            .find_next_sibling()
+                        )
+
+                        # -----------------------------------------
+                        # Zone
+                        # -----------------------------------------
+
+                        if (
+                            current_sibling
+                            and current_sibling.name == "p"
+                        ):
+
+                            wiki_zone_name = (
+                                current_sibling
+                                .get_text(
+                                    " ",
+                                    strip=True
+                                )
+                            )
+
+                            current_sibling = (
+                                current_sibling
+                                .find_next_sibling()
+                            )
+
+                        # -----------------------------------------
+                        # NPC list
+                        # -----------------------------------------
+
+                        if (
+                            current_sibling
+                            and current_sibling.name == "ul"
+                        ):
+
+                            npc_links = (
+                                current_sibling
+                                .find_all(
+                                    "a",
+                                    href=True
+                                )
+                            )
+
+                            if npc_links:
+
+                                npc_names = []
+
+                                for link in npc_links:
+
+                                    name = (
+                                        link.get_text(
+                                            " ",
+                                            strip=True
+                                        )
+                                    )
+
+                                    if (
+                                        name
+                                        and name
+                                        not in npc_names
+                                    ):
+                                        npc_names.append(
+                                            name
+                                        )
+
+                                wiki_npc_name = (
+                                    ", ".join(
+                                        npc_names
+                                    )
+                                )
+
+                            else:
+
+                                npc_items = (
+                                    current_sibling
+                                    .find_all("li")
+                                )
+
+                                npc_names = []
+
+                                for li in npc_items:
+
+                                    name = (
+                                        li.get_text(
+                                            " ",
+                                            strip=True
+                                        )
+                                    )
+
+                                    if (
+                                        name
+                                        and name
+                                        not in npc_names
+                                    ):
+                                        npc_names.append(
+                                            name
+                                        )
+
+                                wiki_npc_name = (
+                                    ", ".join(
+                                        npc_names
+                                    )
+                                )
+
+                # =================================================
+                # RELATED QUEST
+                # =================================================
+
+                quest_section = soup.find(
+                    "h2",
+                    id="Related_quests"
+                )
+
+                if quest_section:
+
+                    quest_heading_wrapper = (
+                        quest_section.parent
+                    )
+
+                    if quest_heading_wrapper:
+
+                        quest_list = (
+                            quest_heading_wrapper
+                            .find_next_sibling()
+                        )
+
+                        if (
+                            quest_list
+                            and quest_list.name == "ul"
+                        ):
+
+                            quest_links = (
+                                quest_list.find_all(
+                                    "a",
+                                    href=True
+                                )
+                            )
+
+                            if quest_links:
+
+                                quest_names = []
+
+                                for link in quest_links:
+
+                                    name = (
+                                        link.get_text(
+                                            " ",
+                                            strip=True
+                                        )
+                                    )
+
+                                    if (
+                                        name
+                                        and name
+                                        not in quest_names
+                                    ):
+                                        quest_names.append(
+                                            name
+                                        )
+
+                                wiki_quest_name = (
+                                    ", ".join(
+                                        quest_names
+                                    )
+                                )
+
+                # =================================================
+                # NPC / QUEST CLEANUP
+                # =================================================
+
+                if (
+                    wiki_quest_name
+                    and wiki_npc_name
+                    and (
+                        wiki_npc_name.strip().lower()
+                        ==
+                        wiki_quest_name.strip().lower()
+                    )
+                ):
+                    wiki_npc_name = ""
+
+                # =================================================
+                # NPC DETAILS / IMAGE
+                # =================================================
+
+                if wiki_npc_name:
+
+                    first_npc = (
+                        wiki_npc_name
+                        .split(",")[0]
+                        .strip()
+                    )
+
+                    npc_page_name = (
+                        first_npc.replace(
+                            " ",
+                            "_"
+                        )
+                    )
+
+                    npc_url = (
+                        f"{wiki_base}/wiki/"
+                        f"{npc_page_name}"
+                    )
+
+                    # ---------------------------------------------
+                    # Space out NPC request from item request
+                    # ---------------------------------------------
+
+                    await asyncio.sleep(
+                        NPC_REQUEST_DELAY
+                    )
+
+                    npc_html = (
+                        await fetch_with_retry(
+                            session,
+                            npc_url,
+                            f"NPC: {first_npc}"
+                        )
+                    )
+
+                    if npc_html:
+
+                        npc_soup = BeautifulSoup(
+                            npc_html,
+                            "html.parser"
+                        )
+
+                        # -----------------------------------------
+                        # NPC image
+                        # -----------------------------------------
+
+                        npc_img = None
+
+                        image_selectors = [
+                            'span[typeof="mw:File"] img',
+                            'span[typeof="mw:Image"] img',
+                            'figure img',
+                            'table.infobox img',
+                            'table.wikitable img',
+                            'img'
+                        ]
+
+                        for selector in image_selectors:
+
+                            candidate = (
+                                npc_soup.select_one(
+                                    selector
+                                )
+                            )
+
+                            if candidate:
+
+                                src = (
+                                    candidate.get("src")
+                                    or candidate.get(
+                                        "data-src"
+                                    )
+                                    or candidate.get(
+                                        "data-original"
+                                    )
+                                    or ""
+                                )
+
+                                if src:
+
+                                    npc_img = src
+                                    break
+
+                        if npc_img:
+
+                            if npc_img.startswith(
+                                "//"
+                            ):
+
+                                wiki_npc_image = (
+                                    f"https:{npc_img}"
+                                )
+
+                            elif npc_img.startswith(
+                                "/"
+                            ):
+
+                                wiki_npc_image = (
+                                    f"{wiki_base}"
+                                    f"{npc_img}"
+                                )
+
+                            elif npc_img.startswith(
+                                "http"
+                            ):
+
+                                wiki_npc_image = (
+                                    npc_img
+                                )
+
+                            else:
+
+                                wiki_npc_image = (
+                                    f"{wiki_base}/"
+                                    f"{npc_img.lstrip('/')}"
+                                )
+
+                        # -----------------------------------------
+                        # NPC level
+                        #
+                        # Not currently written to the database
+                        # by this updater, but we leave the
+                        # scraping here for future use.
+                        # -----------------------------------------
+
+                        mob_stats = npc_soup.find(
+                            "table",
+                            class_="mobStatsBox"
+                        )
+
+                        if mob_stats:
+
+                            tds = (
+                                mob_stats.find_all(
+                                    "td"
+                                )
+                            )
+
+                            if len(tds) >= 3:
+
+                                wiki_npc_level = (
+                                    tds[2]
+                                    .get_text(
+                                        " ",
+                                        strip=True
+                                    )
+                                )
+
+                # =================================================
+                # DETERMINE CHANGES
+                # =================================================
+
                 changes = {}
-                def maybe_update(key, new_value):
-                    if new_value and new_value != db_item[key]:
-                        changes[key] = new_value
 
-                maybe_update("zone_name", zone_name)
-                maybe_update("npc_name", npc_name)
-                maybe_update("item_stats", item_stats)
-                maybe_update("quest_name", quest_name)
-                maybe_update("npc_level", npc_level)
+                # -------------------------------------------------
+                # ITEM STATS
+                #
+                # Replace when different.
+                # -------------------------------------------------
 
-                current_img = db_item["npc_image"] or ""
-                if new_npc_image and not current_img.startswith("https://cdn.discordapp.com/"):
-                    maybe_update("npc_image", new_npc_image)
+                current_item_stats = (
+                    db_item["item_stats"]
+                    or ""
+                ).strip()
 
-                # --- Apply updates ---
+                if (
+                    wiki_item_stats
+                    and wiki_item_stats
+                    != current_item_stats
+                ):
+
+                    changes["item_stats"] = (
+                        wiki_item_stats
+                    )
+
+                # -------------------------------------------------
+                # ZONE
+                #
+                # Only fill if currently blank.
+                # -------------------------------------------------
+
+                current_zone = (
+                    db_item["zone_name"]
+                    or ""
+                ).strip()
+
+                if (
+                    not current_zone
+                    and wiki_zone_name
+                ):
+
+                    changes["zone_name"] = (
+                        wiki_zone_name
+                    )
+
+                # -------------------------------------------------
+                # NPC NAME
+                #
+                # Only fill if currently blank.
+                # -------------------------------------------------
+
+                current_npc = (
+                    db_item["npc_name"]
+                    or ""
+                ).strip()
+
+                if (
+                    not current_npc
+                    and wiki_npc_name
+                ):
+
+                    changes["npc_name"] = (
+                        wiki_npc_name
+                    )
+
+                # -------------------------------------------------
+                # NPC IMAGE
+                #
+                # Only fill if currently blank.
+                # -------------------------------------------------
+
+                current_npc_image = (
+                    db_item["npc_image"]
+                    or ""
+                ).strip()
+
+                if (
+                    not current_npc_image
+                    and wiki_npc_image
+                ):
+
+                    changes["npc_image"] = (
+                        wiki_npc_image
+                    )
+
+                # -------------------------------------------------
+                # QUEST
+                #
+                # Only fill if currently blank.
+                # -------------------------------------------------
+
+                current_quest = (
+                    db_item["quest_name"]
+                    or ""
+                ).strip()
+
+                if (
+                    not current_quest
+                    and wiki_quest_name
+                ):
+
+                    changes["quest_name"] = (
+                        wiki_quest_name
+                    )
+
+                # =================================================
+                # APPLY CHANGES
+                # =================================================
+
                 if changes:
-                    updated_count += 1
-                    changes_log.append(f"🛠️ `{item_name}` → {', '.join(changes.keys())}")
-                    set_clause = ", ".join([f"{col} = ${i+3}" for i, col in enumerate(changes.keys())])
-                    values = list(changes.values())
 
                     async with db_pool.acquire() as conn:
-                        # Update both global and guild versions
+
+                        set_clause = ", ".join(
+                            f"{column} = ${index + 2}"
+                            for index, column
+                            in enumerate(
+                                changes.keys()
+                            )
+                        )
+
+                        values = list(
+                            changes.values()
+                        )
+
+                        # IMPORTANT:
+                        # Update this exact database row.
+                        #
+                        # This prevents a global item and a
+                        # guild-specific item with the same name
+                        # from accidentally updating each other.
                         await conn.execute(
                             f"""
                             UPDATE item_database
                             SET {set_clause}
-                            WHERE LOWER(item_name) = LOWER($1)
-                              AND (guild_id = $2 OR guild_id IS NULL)
+                            WHERE id = $1
                             """,
-                            item_name, db_item["guild_id"] or interaction.guild.id, *values
+                            db_item["id"],
+                            *values
                         )
 
-                await asyncio.sleep(0.3)  # ✅ polite wiki crawl delay
+                    updated_count += 1
+
+                    changed_fields = ", ".join(
+                        changes.keys()
+                    )
+
+                    changes_log.append(
+                        f"🛠️ `{item_name}` → "
+                        f"{changed_fields}"
+                    )
+
+                    print(
+                        f"✅ Updated {item_name}: "
+                        f"{changed_fields}"
+                    )
+
+                # =================================================
+                # POLITE DELAY
+                # =================================================
+
+                await asyncio.sleep(
+                    REQUEST_DELAY
+                )
+
+                # =================================================
+                # PROGRESS
+                # =================================================
+
+                if (
+                    checked_count % 25 == 0
+                    or checked_count == total_items
+                ):
+
+                    print(
+                        f"📊 Wiki update progress: "
+                        f"{checked_count}/"
+                        f"{total_items}"
+                    )
+
+        # =========================================================
+        # FINAL SUMMARY
+        # =========================================================
 
         summary = (
             f"✅ Wiki sync complete!\n"
             f"🔍 Checked: `{checked_count}` items\n"
             f"🛠️ Updated: `{updated_count}` items\n"
         )
-        if changes_log:
-            summary += "\n\n" + "\n".join(changes_log[:20])
-            if len(changes_log) > 20:
-                summary += f"\n...and {len(changes_log) - 20} more changes."
 
-        await interaction.followup.send(summary, ephemeral=True)
+        if failed_items:
+
+            summary += (
+                f"⚠️ Failed: "
+                f"`{len(failed_items)}` items\n"
+            )
+
+        if changes_log:
+
+            summary += (
+                "\n**Changes:**\n"
+                + "\n".join(
+                    changes_log[:30]
+                )
+            )
+
+            if len(changes_log) > 30:
+
+                summary += (
+                    f"\n...and "
+                    f"{len(changes_log) - 30} "
+                    f"more changes."
+                )
+
+        if failed_items:
+
+            summary += (
+                "\n\n**Failed Items:**\n"
+                + "\n".join(
+                    f"• `{name}`"
+                    for name in failed_items[:30]
+                )
+            )
+
+            if len(failed_items) > 30:
+
+                summary += (
+                    f"\n...and "
+                    f"{len(failed_items) - 30} "
+                    f"more failed items."
+                )
+
+        await interaction.followup.send(
+            summary,
+            ephemeral=True
+        )
 
     except Exception as e:
-        print(f"❌ Wiki update failed: {e}")
-        await interaction.followup.send(f"❌ Error: {e}", ephemeral=True)
 
+        print(
+            f"❌ Wiki update failed: {e}"
+        )
+
+        import traceback
+
+        traceback.print_exc()
+
+        try:
+
+            await interaction.followup.send(
+                f"❌ Wiki update failed:\n"
+                f"`{e}`",
+                ephemeral=True
+            )
+
+        except Exception as followup_error:
+
+            print(
+                f"⚠️ Could not send error "
+                f"followup: {followup_error}"
+            )
 
 
 
