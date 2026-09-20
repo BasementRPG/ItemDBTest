@@ -3679,11 +3679,7 @@ class WikiView(discord.ui.View):
             if item["npc_image"] != "":
                 embed.set_thumbnail(url=item["npc_image"])            
             if item["quest_name"] != "":
-                embed.add_field(
-                    name="🧩 Related Quest",
-                    value=f"[{item['quest_name']}]({quest_link})",
-                    inline=False
-                )
+                embed.add_field(name="🧩 Related Quest", value=f"[{item['quest_name']}]({quest_link})", inline=False)
             embed.set_footer(
                 text=f"Page {page_index + 1}/{self.total_pages()} - Total Results: {len(self.items)}"
             )
@@ -5065,17 +5061,63 @@ class ItemSelectMenu(discord.ui.Select):
 
 
 
+# =========================================================
+# UPDATE DB CONTROL VIEW
+# =========================================================
 
+class UpdateDBView(discord.ui.View):
+
+    def __init__(self):
+        super().__init__(timeout=900)
+        self.stopped = False
+
+    @discord.ui.button(
+        label="Stop",
+        style=discord.ButtonStyle.danger
+    )
+    async def stop_update(
+        self,
+        interaction: discord.Interaction,
+        button: discord.ui.Button
+    ):
+
+        self.stopped = True
+
+        button.disabled = True
+
+        await interaction.response.edit_message(
+            content=(
+                "🛑 **Update stopped.**\n\n"
+                "All updates that were already completed have been saved."
+            ),
+            view=self
+        )
 
 
 @bot.tree.command(name="update_db", description="Compare existing DB items with the Wiki and update any changed fields.")
 @app_commands.checks.has_permissions(administrator=True)
 async def update_db(interaction: discord.Interaction):
-    await interaction.response.send_message("🔍 Starting database update from Wiki... this may take a few minutes.", ephemeral=True)
-    await run_update_db(interaction)
+
+    view = UpdateDBView()
+
+    await interaction.response.send_message(
+        "🔄 **Starting database update...**\n\n"
+        "⏱️ The updater is intentionally spacing requests out "
+        "to avoid Wiki rate limits.",
+        view=view,
+        ephemeral=True
+    )
+
+    await run_update_db(
+        interaction,
+        update_view=view
+    )
 
 
-async def run_update_db(interaction: discord.Interaction):
+async def run_update_db(
+    interaction: discord.Interaction,
+    update_view=None
+):
 
     base_url = "https://monstersandmemories.miraheze.org/wiki"
     wiki_base = "https://monstersandmemories.miraheze.org"
@@ -5260,7 +5302,8 @@ async def run_update_db(interaction: discord.Interaction):
                     npc_level,
                     guild_id
                 FROM item_database
-                ORDER BY id ASC
+                ORDER BY RANDOM()
+                LIMIT 20
                 """
             )
 
@@ -5285,9 +5328,19 @@ async def run_update_db(interaction: discord.Interaction):
         async with aiohttp.ClientSession(
             headers=headers
         ) as session:
-
+        
             for db_item in db_items:
-
+        
+                # -------------------------------------------------
+                # STOP CHECK
+                # -------------------------------------------------
+        
+                if update_view and update_view.stopped:
+        
+                    print("🛑 Update stopped by user.")
+        
+                    break
+        
                 item_name = (
                     db_item["item_name"]
                     or ""
@@ -5729,26 +5782,30 @@ async def run_update_db(interaction: discord.Interaction):
 
                 changes = {}
 
+          
                 # -------------------------------------------------
                 # ITEM STATS
                 #
                 # Replace when different.
                 # -------------------------------------------------
-
+                
                 current_item_stats = (
                     db_item["item_stats"]
                     or ""
                 ).strip()
-
-                if (
+                
+                stats_changed = (
                     wiki_item_stats
-                    and wiki_item_stats
-                    != current_item_stats
-                ):
-
-                    changes["item_stats"] = (
-                        wiki_item_stats
-                    )
+                    and wiki_item_stats != current_item_stats
+                )
+                
+                regenerate_item_image = (
+                    stats_changed
+                    and bool(re.search(r"\d", current_item_stats))
+                )
+                
+                if stats_changed:
+                    changes["item_stats"] = wiki_item_stats
 
                 # -------------------------------------------------
                 # ZONE
