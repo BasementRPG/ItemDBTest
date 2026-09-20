@@ -613,36 +613,58 @@ async def fetch_wiki_item_data(item_name):
             # ---------------------------------------------------------
             # Related Quests
             # ---------------------------------------------------------
-
+            
             quest_name = ""
-
+            
             quest_section = soup.find(
                 "h2",
                 id="Related_quests"
             )
-
+            
             if quest_section:
-
-                quest_list = quest_section.find_next("ul")
-
-                if quest_list:
-
-                    quest_links = quest_list.find_all("a")
-
-                    if quest_links:
-                        quest_name = ", ".join(
-                            a.get_text(strip=True)
-                            for a in quest_links
+            
+                # The Wiki places the actual quest <ul> immediately
+                # after the Related quests heading wrapper.
+                quest_heading_wrapper = quest_section.parent
+            
+                if quest_heading_wrapper:
+            
+                    quest_list = quest_heading_wrapper.find_next_sibling()
+            
+                    # Only accept the UL directly following Related quests.
+                    # This prevents Player_crafted's UL from being
+                    # mistaken for a Related Quest.
+                    if quest_list and quest_list.name == "ul":
+            
+                        quest_links = quest_list.find_all(
+                            "a",
+                            href=True
                         )
-                    else:
-                        quest_name = ", ".join(
-                            li.get_text(strip=True)
-                            for li in quest_list.find_all("li")
-                        )
-
-            # If the Wiki incorrectly reports the quest as the NPC,
-            # preserve the same cleanup used by run_update_db().
-            if npc_name.strip().lower() == quest_name.strip().lower():
+            
+                        if quest_links:
+            
+                            quest_names = []
+            
+                            for link in quest_links:
+            
+                                name = link.get_text(
+                                    " ",
+                                    strip=True
+                                )
+            
+                                if name and name not in quest_names:
+                                    quest_names.append(name)
+            
+                            quest_name = ", ".join(quest_names)
+            
+            # Only clear the NPC when there is actually a quest
+            # with the exact same name.
+            if (
+                quest_name
+                and npc_name
+                and npc_name.strip().lower()
+                == quest_name.strip().lower()
+            ):
                 npc_name = ""
 
             # ---------------------------------------------------------
@@ -719,326 +741,7 @@ async def fetch_wiki_item_data(item_name):
                         f"{npc_url}: {e}"
                     )
 
-            # ---------------------------------------------------------
-            # Crafted Item
-            # ---------------------------------------------------------
-
-            crafted_name = ""
-            crafting_recipe = ""
-
-            crafted_section = None
-
-            for pid in (
-                "Player_crafted",
-                "Player_crafter"
-            ):
-
-                crafted_section = soup.find(
-                    "h2",
-                    id=pid
-                )
-
-                if crafted_section:
-                    break
-
-            if crafted_section:
-
-                ul = crafted_section.find_next("ul")
-
-                if ul:
-
-                    li = ul.find("li")
-
-                    if li:
-
-                        direct_bits = []
-
-                        for node in li.contents:
-
-                            if isinstance(
-                                node,
-                                NavigableString
-                            ):
-
-                                text = str(node).strip()
-
-                                if text:
-                                    direct_bits.append(text)
-
-                            elif getattr(
-                                node,
-                                "name",
-                                None
-                            ) != "ul":
-
-                                text = node.get_text(
-                                    " ",
-                                    strip=True
-                                )
-
-                                if text:
-                                    direct_bits.append(text)
-
-                        if direct_bits:
-
-                            crafted_name = " ".join(
-                                direct_bits
-                            )
-
-                        else:
-
-                            nested_ul = li.find("ul")
-
-                            if nested_ul:
-                                nested_ul.extract()
-
-                            crafted_name = (
-                                li.get_text(
-                                    " ",
-                                    strip=True
-                                )
-                                or ""
-                            )
-
-                        yield_qty = None
-                        station_line = None
-
-                        inner_ul = li.find("ul")
-
-                        if inner_ul:
-
-                            for sub_li in inner_ul.find_all(
-                                "li",
-                                recursive=False
-                            ):
-
-                                text = sub_li.get_text(
-                                    " ",
-                                    strip=True
-                                )
-
-                                if not text:
-                                    continue
-
-                                if text.lower().startswith(
-                                    "yield"
-                                ):
-
-                                    match = re.search(
-                                        r"x\s*(\d+)\s*$",
-                                        text,
-                                        flags=re.IGNORECASE
-                                    )
-
-                                    if match:
-                                        yield_qty = match.group(1)
-                                    else:
-                                        match2 = re.search(
-                                            r"(\d+)\s*$",
-                                            text
-                                        )
-
-                                        yield_qty = (
-                                            match2.group(1)
-                                            if match2
-                                            else "1"
-                                        )
-
-                                if text.lower().startswith("in "):
-
-                                    a = sub_li.find(
-                                        "a",
-                                        href=True
-                                    )
-
-                                    if a:
-
-                                        href = a["href"]
-
-                                        if href.startswith("//"):
-                                            href = "https:" + href
-
-                                        elif href.startswith("/"):
-                                            href = wiki_base + href
-
-                                        station_name = a.get_text(
-                                            " ",
-                                            strip=True
-                                        )
-
-                                        station_line = (
-                                            f"In [{station_name}]"
-                                            f"({href}):"
-                                        )
-
-                                    else:
-
-                                        station_line = (
-                                            text
-                                            if text.endswith(":")
-                                            else text + ":"
-                                        )
-
-                        recipe_lines = []
-
-                        dl_block = li.find_next("dl")
-
-                        if dl_block:
-
-                            for dd in dl_block.find_all("dd"):
-
-                                if dd.find("dl"):
-                                    continue
-
-                                dd_text = dd.get_text(
-                                    " ",
-                                    strip=True
-                                )
-
-                                if not dd_text:
-                                    continue
-
-                                qty_match = re.match(
-                                    r"^x\s*(\d+)\s+",
-                                    dd_text,
-                                    flags=re.IGNORECASE
-                                )
-
-                                if qty_match:
-
-                                    qty_str = qty_match.group(1)
-
-                                    a = dd.find(
-                                        "a",
-                                        href=True
-                                    )
-
-                                    if a:
-
-                                        ingredient_name = (
-                                            a.get_text(
-                                                " ",
-                                                strip=True
-                                            )
-                                        )
-
-                                        href = a["href"]
-
-                                        if href.startswith("//"):
-                                            href = (
-                                                "https:"
-                                                + href
-                                            )
-
-                                        elif href.startswith("/"):
-                                            href = (
-                                                wiki_base
-                                                + href
-                                            )
-
-                                        tail_text = (
-                                            dd_text[
-                                                qty_match.end():
-                                            ]
-                                            .replace(
-                                                ingredient_name,
-                                                ""
-                                            )
-                                            .strip()
-                                        )
-
-                                        if tail_text:
-
-                                            line = (
-                                                f"- x{qty_str} "
-                                                f"[{ingredient_name}]"
-                                                f"({href}) "
-                                                f"{tail_text}"
-                                            )
-
-                                        else:
-
-                                            line = (
-                                                f"- x{qty_str} "
-                                                f"[{ingredient_name}]"
-                                                f"({href})"
-                                            )
-
-                                    else:
-
-                                        line = f"- {dd_text}"
-
-                                else:
-
-                                    a = dd.find(
-                                        "a",
-                                        href=True
-                                    )
-
-                                    if a:
-
-                                        ingredient_name = (
-                                            a.get_text(
-                                                " ",
-                                                strip=True
-                                            )
-                                        )
-
-                                        href = a["href"]
-
-                                        if href.startswith("//"):
-                                            href = (
-                                                "https:"
-                                                + href
-                                            )
-
-                                        elif href.startswith("/"):
-                                            href = (
-                                                wiki_base
-                                                + href
-                                            )
-
-                                        line = (
-                                            f"- [{ingredient_name}]"
-                                            f"({href})"
-                                        )
-
-                                    else:
-
-                                        line = f"- {dd_text}"
-
-                                recipe_lines.append(line)
-
-                        # Deduplicate recipe lines.
-                        seen = set()
-                        clean_recipe_lines = []
-
-                        for line in recipe_lines:
-
-                            if line not in seen:
-
-                                clean_recipe_lines.append(line)
-                                seen.add(line)
-
-                        block_lines = []
-
-                        if yield_qty is not None:
-                            block_lines.append(
-                                f"Yield: {yield_qty}"
-                            )
-
-                        if station_line:
-                            block_lines.append(
-                                station_line
-                            )
-
-                        block_lines.extend(
-                            clean_recipe_lines
-                        )
-
-                        crafting_recipe = "\n".join(
-                            block_lines
-                        )
+           
 
             # ---------------------------------------------------------
             # Item Stats
@@ -1082,9 +785,8 @@ async def fetch_wiki_item_data(item_name):
                 "npc_level": npc_level,
                 "npc_image": npc_image,
                 "item_stats": item_stats,
-                "quest_name": quest_name,
-                "crafted_name": crafted_name,
-                "crafting_recipe": crafting_recipe
+                "quest_name": quest_name
+
             }
 
     except Exception as e:
@@ -1256,8 +958,6 @@ class WikiFoundDataView(discord.ui.View):
         npc_level = wiki_data.get("npc_level", "") or ""
 
         quest_name = wiki_data.get("quest_name", "") or ""
-        crafted_name = wiki_data.get("crafted_name", "") or ""
-        crafting_recipe = wiki_data.get("crafting_recipe", "") or ""
 
         wiki_npc_image = wiki_data.get("npc_image", "") or ""
 
@@ -1334,9 +1034,7 @@ class WikiFoundDataView(discord.ui.View):
                 item_slot,
                 added_by,
                 created_at,
-                quest_name,
-                crafted_name,
-                crafting_recipe
+                quest_name
             )
             VALUES (
                 $1,
@@ -1353,9 +1051,7 @@ class WikiFoundDataView(discord.ui.View):
                 $12,
                 $13,
                 NOW(),
-                $14,
-                $15,
-                $16
+                $14
             )
             """,
             self.guild_id,
@@ -1371,9 +1067,7 @@ class WikiFoundDataView(discord.ui.View):
             item_stats,
             item_slot,
             self.added_by,
-            quest_name,
-            crafted_name,
-            crafting_recipe
+            quest_name
         )
 
         # -----------------------------------------
@@ -1887,19 +1581,6 @@ class ItemNameCheckModal(discord.ui.Modal, title="Add Item to Database"):
                     inline=False
                 )
         
-            if wiki_data["crafted_name"]:
-                review_embed.add_field(
-                    name="⚒️ Crafted Item",
-                    value=wiki_data["crafted_name"][:1024],
-                    inline=False
-                )
-        
-            if wiki_data["crafting_recipe"]:
-                review_embed.add_field(
-                    name="📜 Crafting Recipe",
-                    value=wiki_data["crafting_recipe"][:1024],
-                    inline=False
-                )
         
             review_view = WikiFoundDataView(
                 item_name=item_name,
@@ -3289,8 +2970,7 @@ async def run_item_db(
     where_sql = " WHERE " + " AND ".join(where_clauses) if where_clauses else ""
     query = f"""
         SELECT item_name, item_image, npc_image, npc_name, zone_name, zone_area,
-               item_slot, item_stats, description, quest_name, crafted_name, crafting_recipe,
-               npc_level, source
+               item_slot, item_stats, description, quest_name, npc_level, source
         FROM item_database
         {where_sql}
         ORDER BY item_name ASC;
@@ -3557,8 +3237,6 @@ async def run_item_db(
                 "item_stats": row["item_stats"] or "",
                 "description": row["description"] or "",
                 "quest_name": row["quest_name"] or "",
-                "crafted_name": row["crafted_name"] or "",
-                "crafting_recipe":row["crafting_recipe"] or "",
                 "npc_level": row["npc_level"] or "",
                 "source": "Database",
             }
@@ -3859,72 +3537,7 @@ class WikiView(discord.ui.View):
             zone_link = f"{linkback}{zone_name.replace(' ', '_')}"
             
             quest_link = f"{linkback}{item['quest_name'].replace(' ', '_')}"
-            
-            crafted_name = item["crafted_name"]
-
-            
-            crafted_index = crafted_name.find('(')
-            if crafted_index != -1:
-                crafted_name = crafted_name[:crafted_index]
-            else:
-                # If no space is found, the original string is returned
-                crafted_name = crafted_name
-            crafted_link = f"{linkback}{crafted_name}"
-
-            # Show recipe if expanded
-            item_key = item["item_name"]
-
-
-            crafting_recipe = item.get("crafting_recipe") or ""
-
-           
-            yield_text = ""
-            re_crafting_recipe = []
-            
-            if crafting_recipe:
-                for line in crafting_recipe.split("\n"):
-                    if line.lower().startswith("yield"):
-                        yield_text = line.strip()
-                    else:
-                        re_crafting_recipe.append(line)
-            
-            crafting_recipe_clean = "\n".join(re_crafting_recipe)
-
-
-            def recipe_with_emojis(crafting_recipe_text: str) -> str:
-              if not crafting_recipe_text:
-                  return crafting_recipe_text
-          
-              # ✅ Added " Mined": " ⛏️"
-              replacements = {
-                  " Crafted": " ⚒️",
-                  " Dropped": " 💀",
-                  " Drop": " 💀",
-                  " Bought": " 💰",
-                  " Vendor": " 💰",
-                  " Mined": " ⛏️",
-              }
-          
-              out_lines = []
-              for line in crafting_recipe_text.split("\n"):
-                  # Emoji replacements on the line
-                  for key, emoji in replacements.items():
-                      line = line.replace(key, emoji)
-          
-                  # Cut everything from "with" onward (case-insensitive)
-                  low = line.lower()
-                  # match ' with ' or starting with 'with '
-                  if " with " in low or low.startswith("with "):
-                      cut = low.find(" with ") if " with " in low else 0
-                      if cut >= 0:
-                          line = line[:cut].rstrip()
-          
-                  out_lines.append(line)
-          
-              return "\n".join(out_lines)
-                
-            display_recipe = recipe_with_emojis(crafting_recipe_clean)
-           
+                    
             
             embed = discord.Embed(
                 title=item["item_name"],
@@ -4448,372 +4061,7 @@ async def fetch_wiki_items(slot_name: str):
 
                                 continue
 
-                    # -------------------------------------------------
-                    # Extract Crafted
-                    # -------------------------------------------------
-
-                    crafted_name = ""
-                    crafting_recipe = ""
-
-                    crafted_section = None
-
-                    for pid in (
-                        "Player_crafted",
-                        "Player_crafter"
-                    ):
-
-                        crafted_section = s2.find(
-                            "h2",
-                            id=pid
-                        )
-
-                        if crafted_section:
-                            break
-
-                    if crafted_section:
-
-                        ul = crafted_section.find_next("ul")
-
-                        if ul:
-
-                            li = ul.find("li")
-
-                            if li:
-
-                                # --- Crafted name ---
-                                direct_bits = []
-
-                                for node in li.contents:
-
-                                    if isinstance(
-                                        node,
-                                        NavigableString
-                                    ):
-
-                                        text = str(
-                                            node
-                                        ).strip()
-
-                                        if text:
-                                            direct_bits.append(text)
-
-                                    elif getattr(
-                                        node,
-                                        "name",
-                                        None
-                                    ) != "ul":
-
-                                        text = node.get_text(
-                                            " ",
-                                            strip=True
-                                        )
-
-                                        if text:
-                                            direct_bits.append(text)
-
-                                if direct_bits:
-
-                                    crafted_name = " ".join(
-                                        direct_bits
-                                    )
-
-                                else:
-
-                                    nested_ul = li.find("ul")
-
-                                    if nested_ul:
-                                        nested_ul.extract()
-
-                                    crafted_name = (
-                                        li.get_text(
-                                            " ",
-                                            strip=True
-                                        )
-                                        or ""
-                                    )
-
-                                # --- Yield & Station ---
-                                wiki_base = (
-                                    "https://monstersandmemories.miraheze.org"
-                                )
-
-                                yield_qty = None
-                                station_line = None
-
-                                inner_ul = li.find("ul")
-
-                                if inner_ul:
-
-                                    for sub_li in inner_ul.find_all(
-                                        "li",
-                                        recursive=False
-                                    ):
-
-                                        text = sub_li.get_text(
-                                            " ",
-                                            strip=True
-                                        )
-
-                                        if not text:
-                                            continue
-
-                                        # Yield
-                                        if text.lower().startswith(
-                                            "yield"
-                                        ):
-
-                                            m = re.search(
-                                                r"x\s*(\d+)\s*$",
-                                                text,
-                                                flags=re.IGNORECASE
-                                            )
-
-                                            if m:
-
-                                                yield_qty = m.group(1)
-
-                                            else:
-
-                                                m2 = re.search(
-                                                    r"(\d+)\s*$",
-                                                    text
-                                                )
-
-                                                yield_qty = (
-                                                    m2.group(1)
-                                                    if m2
-                                                    else "1"
-                                                )
-
-                                        # Crafting station link
-                                        if text.lower().startswith("in "):
-
-                                            a = sub_li.find(
-                                                "a",
-                                                href=True
-                                            )
-
-                                            if a:
-
-                                                href = a["href"]
-
-                                                if href.startswith("//"):
-
-                                                    href = (
-                                                        "https:"
-                                                        + href
-                                                    )
-
-                                                elif href.startswith("/"):
-
-                                                    href = (
-                                                        wiki_base
-                                                        + href
-                                                    )
-
-                                                station_name = a.get_text(
-                                                    " ",
-                                                    strip=True
-                                                )
-
-                                                station_line = (
-                                                    f"In "
-                                                    f"[{station_name}]"
-                                                    f"({href}):"
-                                                )
-
-                                            else:
-
-                                                station_line = (
-                                                    text
-                                                    if text.endswith(":")
-                                                    else text + ":"
-                                                )
-
-                                # --- Ingredient list ---
-                                recipe_lines = []
-
-                                dl_block = li.find_next("dl")
-
-                                if dl_block:
-
-                                    for dd in dl_block.find_all("dd"):
-
-                                        if dd.find("dl"):
-                                            continue
-
-                                        dd_text = dd.get_text(
-                                            " ",
-                                            strip=True
-                                        )
-
-                                        if not dd_text:
-                                            continue
-
-                                        qty_match = re.match(
-                                            r"^x\s*(\d+)\s+",
-                                            dd_text,
-                                            flags=re.IGNORECASE
-                                        )
-
-                                        qty_str = None
-                                        line = ""
-
-                                        if qty_match:
-
-                                            qty_str = (
-                                                qty_match.group(1)
-                                            )
-
-                                            a = dd.find(
-                                                "a",
-                                                href=True
-                                            )
-
-                                            if a:
-
-                                                ingredient_name = (
-                                                    a.get_text(
-                                                        " ",
-                                                        strip=True
-                                                    )
-                                                )
-
-                                                href = a["href"]
-
-                                                if href.startswith("//"):
-
-                                                    href = (
-                                                        "https:"
-                                                        + href
-                                                    )
-
-                                                elif href.startswith("/"):
-
-                                                    href = (
-                                                        wiki_base
-                                                        + href
-                                                    )
-
-                                                tail_text = (
-                                                    dd_text[
-                                                        qty_match.end():
-                                                    ]
-                                                    .replace(
-                                                        ingredient_name,
-                                                        ""
-                                                    )
-                                                    .strip()
-                                                )
-
-                                                if tail_text:
-
-                                                    line = (
-                                                        f"- x{qty_str} "
-                                                        f"[{ingredient_name}]"
-                                                        f"({href}) "
-                                                        f"{tail_text}"
-                                                    )
-
-                                                else:
-
-                                                    line = (
-                                                        f"- x{qty_str} "
-                                                        f"[{ingredient_name}]"
-                                                        f"({href})"
-                                                    )
-
-                                            else:
-
-                                                line = (
-                                                    f"- {dd_text}"
-                                                )
-
-                                        else:
-
-                                            a = dd.find(
-                                                "a",
-                                                href=True
-                                            )
-
-                                            if a:
-
-                                                ingredient_name = (
-                                                    a.get_text(
-                                                        " ",
-                                                        strip=True
-                                                    )
-                                                )
-
-                                                href = a["href"]
-
-                                                if href.startswith("//"):
-
-                                                    href = (
-                                                        "https:"
-                                                        + href
-                                                    )
-
-                                                elif href.startswith("/"):
-
-                                                    href = (
-                                                        wiki_base
-                                                        + href
-                                                    )
-
-                                                line = (
-                                                    f"- "
-                                                    f"[{ingredient_name}]"
-                                                    f"({href})"
-                                                )
-
-                                            else:
-
-                                                line = (
-                                                    f"- {dd_text}"
-                                                )
-
-                                        recipe_lines.append(line)
-
-                                # --- Deduplicate cleanly ---
-                                seen = set()
-                                recipe_lines_cleaned = []
-
-                                for line in recipe_lines:
-
-                                    if line not in seen:
-
-                                        recipe_lines_cleaned.append(
-                                            line
-                                        )
-
-                                        seen.add(line)
-
-                                # --- Final save block ---
-                                block_lines = []
-
-                                if yield_qty is not None:
-
-                                    block_lines.append(
-                                        f"Yield: {yield_qty}"
-                                    )
-
-                                if station_line:
-
-                                    block_lines.append(
-                                        station_line
-                                    )
-
-                                if recipe_lines_cleaned:
-
-                                    block_lines.extend(
-                                        recipe_lines_cleaned
-                                    )
-
-                                crafting_recipe = "\n".join(
-                                    block_lines
-                                )
-
+                    
                     # -------------------------------------------------
                     # Item Stats
                     # -------------------------------------------------
@@ -4864,10 +4112,8 @@ async def fetch_wiki_items(slot_name: str):
                         "wiki_url": item_url,
                         "description": description,
                         "quest_name": quest_name,
-                        "crafted_name": crafted_name,
                         "npc_level": npc_level,
                         "npc_image": npc_image,
-                        "crafting_recipe": crafting_recipe,
                         "source": "Wiki"
                     })
 
@@ -5351,7 +4597,7 @@ async def run_wiki_items(interaction: discord.Interaction, slot: str, stat: Opti
         async with db_pool.acquire() as conn:
             db_rows = await conn.fetch("""
                 SELECT item_name, item_image, item_slot, npc_name, zone_name, item_stats,
-                       description, quest_name, crafted_name, crafting_recipe, npc_image, npc_level
+                       description, quest_name, npc_image, npc_level
                 FROM item_database
                 WHERE LOWER(item_slot) = LOWER($1)
             """, slot)
@@ -5451,9 +4697,8 @@ async def run_wiki_items(interaction: discord.Interaction, slot: str, stat: Opti
                     await conn.execute("""
                         INSERT INTO item_database (
                             item_name, item_slot, item_image, npc_image, npc_name, zone_name, zone_area,
-                            item_stats, description, crafted_name, crafting_recipe, quest_name, npc_level,
-                            added_by, source
-                        ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,'Wiki')
+                            item_stats, description, quest_name, npc_level, added_by, source
+                        ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,'Wiki')
                         ON CONFLICT (item_name) DO NOTHING
                     """,
                     item["item_name"],
@@ -5464,9 +4709,7 @@ async def run_wiki_items(interaction: discord.Interaction, slot: str, stat: Opti
                     zone_name,
                     item.get("zone_area") or "",
                     item.get("item_stats") or "",
-                    item.get("description") or "",
-                    item.get("crafted_name") or "",
-                    item.get("crafting_recipe") or "",                  
+                    item.get("description") or "",                 
                     item.get("quest_name") or "",
                     item.get("npc_level") or "",
                     interaction.user.name
@@ -5531,8 +4774,7 @@ async def run_wiki_items(interaction: discord.Interaction, slot: str, stat: Opti
         async with db_pool.acquire() as conn:
             refreshed_rows = await conn.fetch("""
                 SELECT item_name, item_image, npc_image, npc_name, zone_name, zone_area,
-                       item_slot, item_stats, description, quest_name, crafted_name, crafting_recipe,
-                       npc_level, source
+                       item_slot, item_stats, description, quest_name, npc_level, source
                 FROM item_database
                 WHERE LOWER(item_slot) = LOWER($1)
                 ORDER BY item_name ASC
@@ -5562,8 +4804,6 @@ async def run_wiki_items(interaction: discord.Interaction, slot: str, stat: Opti
                 "wiki_url": None,
                 "description": row["description"] or "",
                 "quest_name": row["quest_name"] or "",
-                "crafted_name": row["crafted_name"] or "",
-                "crafting_recipe": row["crafting_recipe"] or "",
                 "npc_level": row["npc_level"] or "",
                 "source": row["source"],
                 "in_database": True,
@@ -5627,9 +4867,6 @@ class ItemSelectMenu(discord.ui.Select):
         item_link =f"{linkback}{item['item_name'].replace(' ', '_')}"
         zone_link = f"{linkback}{item['zone_name'].replace(' ', '_')}"
         quest_link = f"{linkback}{item['quest_name'].replace(' ', '_')}"
-        crafted_name = item["crafted_name"]
-        crafting_recipe = item["crafting_recipe"]
-        crafted_index = crafted_name.find('(')
         if any(char.isdigit() for char in item["npc_name"]):
             npc_name=item["npc_name"]
     
@@ -5646,12 +4883,7 @@ class ItemSelectMenu(discord.ui.Select):
             # Join with newlines for vertical display in embed
             npc_name = " \n ".join(linked_npc)
 
-        if crafted_index != -1:
-            crafted_name = crafted_name[:crafted_index]
-        else:
-            # If no space is found, the original string is returned
-            crafted_name = crafted_name
-        crafted_link = f"{linkback}{crafted_name}"
+        
         level = item["npc_level"]
         level_number = re.search(r'\d', level)
         if level_number:
@@ -5706,8 +4938,7 @@ async def run_update_db(interaction: discord.Interaction):
         async with db_pool.acquire() as conn:
             db_items = await conn.fetch("""
                 SELECT id, item_name, zone_name, zone_area, npc_name,
-                       item_stats, crafted_name, crafting_recipe,
-                       quest_name, npc_image, npc_level, guild_id
+                       item_stats, quest_name, npc_image, npc_level, guild_id
                 FROM item_database
             """)
 
@@ -5744,16 +4975,40 @@ async def run_update_db(interaction: discord.Interaction):
                         npc_name = ", ".join(a.get_text(strip=True) for a in npc_links) if npc_links else \
                                     ", ".join(li.get_text(strip=True) for li in npc_list.find_all("li"))
 
+
                 # --- Quest Info ---
                 quest_name = ""
-                if (quest_section := soup.find("h2", id="Related_quests")):
-                    quest_list = quest_section.find_next("ul")
-                    if quest_list:
-                        quest_links = quest_list.find_all("a")
-                        quest_name = ", ".join(a.get_text(strip=True) for a in quest_links) if quest_links else \
-                                     ", ".join(li.get_text(strip=True) for li in quest_list.find_all("li"))
-
-                if npc_name.strip().lower() == quest_name.strip().lower():
+                
+                quest_section = soup.find("h2", id="Related_quests")
+                
+                if quest_section:
+                    # The Wiki places the actual quest <ul> immediately after
+                    # the heading's mw-heading wrapper.
+                    quest_heading_wrapper = quest_section.parent
+                
+                    if quest_heading_wrapper:
+                        quest_list = quest_heading_wrapper.find_next_sibling()
+                
+                        # Only accept the UL directly following Related quests.
+                        # This prevents Player_crafted's UL from being mistaken
+                        # for a Related Quest.
+                        if quest_list and quest_list.name == "ul":
+                            quest_links = quest_list.find_all("a", href=True)
+                
+                            if quest_links:
+                                quest_names = []
+                
+                                for link in quest_links:
+                                    name = link.get_text(" ", strip=True)
+                
+                                    if name and name not in quest_names:
+                                        quest_names.append(name)
+                
+                                quest_name = ", ".join(quest_names)
+                
+                # Only clear the NPC when there is actually a quest
+                # with the exact same name.
+                if quest_name and npc_name and npc_name.strip().lower() == quest_name.strip().lower():
                     npc_name = ""
 
                 # --- NPC Details ---
@@ -5781,147 +5036,6 @@ async def run_update_db(interaction: discord.Interaction):
                     except Exception as e:
                         print(f"⚠️ Failed NPC fetch {npc_url}: {e}")
 
-           
-                # --- Crafted Item ---
-      
-  
-                crafted_name = ""
-                crafting_recipe = ""  # final formatted block for DB
-                
-                crafted_section = None
-                for pid in ("Player_crafted", "Player_crafter"):
-                    crafted_section = soup.find("h2", id=pid)
-                    if crafted_section:
-                        break
-                
-                if crafted_section:
-                    ul = crafted_section.find_next("ul")
-                    if ul:
-                        li = ul.find("li")
-                        if li:
-                            # --- Crafted name ---
-                            direct_bits = []
-                            for node in li.contents:
-                                if isinstance(node, NavigableString):
-                                    text = str(node).strip()
-                                    if text:
-                                        direct_bits.append(text)
-                                elif getattr(node, "name", None) != "ul":
-                                    text = node.get_text(" ", strip=True)
-                                    if text:
-                                        direct_bits.append(text)
-                
-                            if direct_bits:
-                                crafted_name = " ".join(direct_bits)
-                            else:
-                                nested_ul = li.find("ul")
-                                if nested_ul:
-                                    nested_ul.extract()
-                                crafted_name = li.get_text(" ", strip=True) or ""
-                
-                            # --- Yield & Station ---
-                            wiki_base = "https://monstersandmemories.miraheze.org"
-                            yield_qty = None
-                            station_line = None
-                
-                            inner_ul = li.find("ul")
-                            if inner_ul:
-                                for sub_li in inner_ul.find_all("li", recursive=False):
-                                    text = sub_li.get_text(" ", strip=True)
-                                    if not text:
-                                        continue
-                
-                                    # Yield
-                                    if text.lower().startswith("yield"):
-                                        m = re.search(r"x\s*(\d+)\s*$", text, flags=re.IGNORECASE)
-                                        if m:
-                                            yield_qty = m.group(1)
-                                        else:
-                                            m2 = re.search(r"(\d+)\s*$", text)
-                                            yield_qty = m2.group(1) if m2 else "1"
-                
-                                    # Crafting station link
-                                    if text.lower().startswith("in "):
-                                        a = sub_li.find("a", href=True)
-                                        if a:
-                                            href = a["href"]
-                                            if href.startswith("//"):
-                                                href = "https:" + href
-                                            elif href.startswith("/"):
-                                                href = wiki_base + href
-                                            station_name = a.get_text(" ", strip=True)
-                                            station_line = f"In [{station_name}]({href}):"
-                                        else:
-                                            station_line = text if text.endswith(":") else (text + ":")
-                
-                            # --- Ingredient list (linked, unique, no nesting) ---
-                            recipe_lines = []
-                            dl_block = li.find_next("dl")
-                            if dl_block:
-                                for dd in dl_block.find_all("dd"):
-                                    if dd.find("dl"):
-                                        continue  # skip parents
-                                    dd_text = dd.get_text(" ", strip=True)
-                                    if not dd_text:
-                                        continue
-                
-                                    qty_match = re.match(r"^x\s*(\d+)\s+", dd_text, flags=re.IGNORECASE)
-                                    qty_str = None
-                                    line = ""
-                
-                                    if qty_match:
-                                        qty_str = qty_match.group(1)
-                                        a = dd.find("a", href=True)
-                                        if a:
-                                            ingredient_name = a.get_text(" ", strip=True)
-                                            href = a["href"]
-                                            if href.startswith("//"):
-                                                href = "https:" + href
-                                            elif href.startswith("/"):
-                                                href = wiki_base + href
-                                            else:
-                                                href = href
-                                            # preserve all text after the item name
-                                            tail_text = dd_text[qty_match.end():].replace(ingredient_name, "").strip()
-                                            if tail_text:
-                                                line = f"- x{qty_str} [{ingredient_name}]({href}) {tail_text}"
-                                            else:
-                                                line = f"- x{qty_str} [{ingredient_name}]({href})"
-                                        else:
-                                            line = f"- {dd_text}"
-                                    else:
-                                        a = dd.find("a", href=True)
-                                        if a:
-                                            ingredient_name = a.get_text(" ", strip=True)
-                                            href = a["href"]
-                                            if href.startswith("//"):
-                                                href = "https:" + href
-                                            elif href.startswith("/"):
-                                                href = wiki_base + href
-                                            line = f"- [{ingredient_name}]({href})"
-                                        else:
-                                            line = f"- {dd_text}"
-                
-                                    recipe_lines.append(line)
-                
-                            # --- Deduplicate cleanly ---
-                            seen = set()
-                            recipe_lines_cleaned = []
-                            for line in recipe_lines:
-                                if line not in seen:
-                                    recipe_lines_cleaned.append(line)
-                                    seen.add(line)
-                
-                            # --- Final save block ---
-                            block_lines = []
-                            if yield_qty is not None:
-                                block_lines.append(f"Yield: {yield_qty}")
-                            if station_line:
-                                block_lines.append(station_line)
-                            if recipe_lines_cleaned:
-                                block_lines.extend(recipe_lines_cleaned)
-                
-                            crafting_recipe = "\n".join(block_lines)
 
 
                    # --- Item Stats ---
@@ -5944,8 +5058,6 @@ async def run_update_db(interaction: discord.Interaction):
                 maybe_update("zone_name", zone_name)
                 maybe_update("npc_name", npc_name)
                 maybe_update("item_stats", item_stats)
-                maybe_update("crafted_name", crafted_name)
-                maybe_update("crafting_recipe", crafting_recipe)
                 maybe_update("quest_name", quest_name)
                 maybe_update("npc_level", npc_level)
 
