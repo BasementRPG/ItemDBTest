@@ -5118,20 +5118,37 @@ class UpdateDBTermModal(discord.ui.Modal, title="Enter Update Term"):
 
 
     async def on_submit(self, interaction: discord.Interaction):
-    
-        term = self.update_term.value.strip()
-    
-        if not term:
-            await interaction.response.send_message(
-                "⚠️ Please enter an update term.",
-                ephemeral=True
-            )
-            return
-    
-        update_view = UpdateDBStopView()
-    
-        # Send the new updating message first
+
+    term = self.update_term.value.strip()
+
+    if not term:
         await interaction.response.send_message(
+            "⚠️ Please enter an update term.",
+            ephemeral=True
+        )
+        return
+
+    update_view = UpdateDBStopView()
+
+    # Acknowledge the modal submission
+    await interaction.response.defer()
+
+    # Edit the original /update_db menu message
+    try:
+        await self.original_message.edit(
+            content=(
+                f"🔄 **Updating Database**\n\n"
+                f"Searching for items matching:\n"
+                f"**{term}**\n\n"
+                f"Only matching item names will be checked."
+            ),
+            view=update_view
+        )
+
+    except discord.NotFound:
+        # If Discord no longer allows the original ephemeral
+        # message to be edited, fall back to a new message.
+        await interaction.followup.send(
             content=(
                 f"🔄 **Updating Database**\n\n"
                 f"Searching for items matching:\n"
@@ -5141,18 +5158,12 @@ class UpdateDBTermModal(discord.ui.Modal, title="Enter Update Term"):
             view=update_view,
             ephemeral=True
         )
-    
-        # Remove the original Update Database menu
-        try:
-            await self.original_message.delete()
-        except discord.NotFound:
-            pass
-    
-        await run_update_db(
-            interaction,
-            update_term=term,
-            update_view=update_view
-        )
+
+    await run_update_db(
+        interaction,
+        update_term=term,
+        update_view=update_view
+    )
 
 
 class UpdateDBAlphabeticalSelect(discord.ui.Select):
