@@ -1537,8 +1537,7 @@ class WikiFoundDataView(discord.ui.View):
                 print(
                     f"❌ Could not send manual entry error message: "
                     f"{response_error}"
-                )  f"{response_error}"
-                    )
+                ) 
 
     @discord.ui.button(
         label="❌ Cancel",
