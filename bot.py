@@ -2182,7 +2182,16 @@ class SlotStatClassSelectView(discord.ui.View):
         if hasattr(self, "all_stats") and self.all_stats:
             if item_stats:
                 item_stats += "\n"
-            item_stats += f"Stats: {', '.join(self.all_stats)}"
+        
+            formatted_stats = []
+        
+            for stat in self.all_stats:
+                if stat == "Instrument":
+                    formatted_stats.append("Brass:")
+                else:
+                    formatted_stats.append(stat)
+        
+            item_stats += f"Stats: {', '.join(formatted_stats)}"
         
         # Add Skill Use
         if getattr(self, "skill_use", None):
