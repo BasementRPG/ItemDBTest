@@ -3635,11 +3635,17 @@ class WikiView(discord.ui.View):
                 # Split by comma and strip spaces
                 npc_name = [name.strip() for name in npc_string.split(",") if name.strip()]
                 # Build full wiki links
+
                 linked_npc = []
                 for name in npc_name:
-                    # Replace spaces with underscores for proper wiki URL formatting
-                    npc_url = linkback + name.replace(" ", "_")
-                    linked_npc.append(f"[{name}]({npc_url})")
+                
+                    # Trash Mobs is not a wiki page, so leave it as plain text.
+                    if name.strip().lower() == "trash mobs":
+                        linked_npc.append(name)
+                    else:
+                        # Replace spaces with underscores for proper wiki URL formatting
+                        npc_url = linkback + name.replace(" ", "_")
+                        linked_npc.append(f"[{name}]({npc_url})")
                 # Join with newlines for vertical display in embed
                 npc_name = " \n ".join(linked_npc)
 
