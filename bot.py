@@ -5304,10 +5304,6 @@ async def update_db(interaction: discord.Interaction):
         ephemeral=True
     )
 
-    await run_update_db(
-        interaction,
-        update_view=view
-    )
 
 
 async def run_update_db(
@@ -5561,12 +5557,7 @@ async def run_update_db(
                 # -------------------------------------------------
                 # STOP CHECK
                 # -------------------------------------------------
-        
-                if update_view and update_view.stopped:
-        
-                    print("🛑 Update stopped by user.")
-        
-                    break
+
         
                 item_name = (
                     db_item["item_name"]
