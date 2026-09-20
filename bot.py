@@ -5112,6 +5112,10 @@ class UpdateDBTermModal(discord.ui.Modal, title="Enter Update Term"):
         max_length=100
     )
 
+    def __init__(self, original_message):
+        super().__init__()
+        self.original_message = original_message
+
     async def on_submit(self, interaction: discord.Interaction):
 
         term = self.update_term.value.strip()
@@ -5123,11 +5127,17 @@ class UpdateDBTermModal(discord.ui.Modal, title="Enter Update Term"):
             )
             return
 
-        await interaction.response.send_message(
-            f"🔎 **Starting Update Term:** `{term}`\n\n"
-            f"Only items with **{term}** somewhere in their item name "
-            f"will be checked.",
-            ephemeral=True
+        await interaction.response.defer()
+
+        # Replace the original Update Database message
+        await self.original_message.edit(
+            content=(
+                f"🔄 **Updating Database**\n\n"
+                f"Searching for items matching:\n"
+                f"**{term}**\n\n"
+                f"Only matching item names will be checked."
+            ),
+            view=None
         )
 
         await run_update_db(
@@ -5177,8 +5187,9 @@ class UpdateDBAlphabeticalSelect(discord.ui.Select):
             max_values=1
         )
 
-    async def callback(self, interaction: discord.Interaction):
 
+    async def callback(self, interaction: discord.Interaction):
+    
         ranges = {
             "A-E": ("A", "E"),
             "F-J": ("F", "J"),
@@ -5186,20 +5197,20 @@ class UpdateDBAlphabeticalSelect(discord.ui.Select):
             "P-T": ("P", "T"),
             "U-Z": ("U", "Z")
         }
-
+    
         selected_range = self.values[0]
-
+    
         start_letter, end_letter = ranges[selected_range]
-
+    
         self.parent_view.selected_range = selected_range
         self.parent_view.start_letter = start_letter
         self.parent_view.end_letter = end_letter
-
+    
         await interaction.response.edit_message(
             content=(
                 "📚 **Update Database**\n\n"
                 f"Selected section: **{selected_range}**\n\n"
-                "Choose **Update** to update this alphabetical section, "
+                "Press **Update** to update this section, "
                 "or **Enter Update Term** to search for a specific item name."
             ),
             view=self.parent_view
@@ -5260,7 +5271,7 @@ class UpdateDBTermButton(discord.ui.Button):
     async def callback(self, interaction: discord.Interaction):
 
         await interaction.response.send_modal(
-            UpdateDBTermModal()
+            UpdateDBTermModal(interaction.message)
         )
 
 
