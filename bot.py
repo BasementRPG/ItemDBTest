@@ -3912,55 +3912,86 @@ async def fetch_wiki_items(slot_name: str):
                                     for li in npc_items
                                 )
 
-                    # -------------------------------------------------
-                    # Extract Quest
-                    # -------------------------------------------------
 
+                    # -------------------------------------------------
+                    # Extract Related Quest
+                    # -------------------------------------------------
+                    
                     quest_name = ""
-
-                    drops_section = s2.find(
+                    
+                    quest_section = s2.find(
                         "h2",
                         id="Related_quests"
                     )
-
-                    if drops_section:
-
-                        # Then look for <ul><li> list of Quest
-                        quest_list = drops_section.find_next("ul")
-
-                        if quest_list:
-
-                            quest_links = quest_list.find_all("a")
-
-                            if quest_links:
-
-                                quest_name = ", ".join(
-                                    a.get_text(
-                                        strip=True
-                                    )
-                                    for a in quest_links
+                    
+                    if quest_section:
+                    
+                        # The Wiki places the Related Quests content
+                        # immediately after the heading's wrapper.
+                        quest_heading_wrapper = quest_section.parent
+                    
+                        if quest_heading_wrapper:
+                    
+                            quest_list = quest_heading_wrapper.find_next_sibling()
+                    
+                            # IMPORTANT:
+                            # Only accept a UL directly following the
+                            # Related quests heading.
+                            #
+                            # This prevents the Player_crafted UL
+                            # from being mistaken for a Related Quest.
+                            if quest_list and quest_list.name == "ul":
+                    
+                                quest_links = quest_list.find_all(
+                                    "a",
+                                    href=True
                                 )
-
-                            else:
-
-                                # Fallback: plain text <li>
-                                quest_items = quest_list.find_all("li")
-
-                                quest_name = ", ".join(
-                                    li.get_text(
-                                        strip=True
-                                    )
-                                    for li in quest_items
-                                )
-
+                    
+                                if quest_links:
+                    
+                                    quest_names = []
+                    
+                                    for link in quest_links:
+                    
+                                        name = link.get_text(
+                                            " ",
+                                            strip=True
+                                        )
+                    
+                                        if name and name not in quest_names:
+                                            quest_names.append(name)
+                    
+                                    quest_name = ", ".join(quest_names)
+                    
+                                else:
+                    
+                                    # Fallback for plain-text quest entries.
+                                    quest_items = quest_list.find_all("li")
+                    
+                                    quest_names = []
+                    
+                                    for li in quest_items:
+                    
+                                        name = li.get_text(
+                                            " ",
+                                            strip=True
+                                        )
+                    
+                                        if name and name not in quest_names:
+                                            quest_names.append(name)
+                    
+                                    quest_name = ", ".join(quest_names)
+                    
+                    
                     # -------------------------------------------------
                     # If NPC and quest are identical, clear NPC
                     # -------------------------------------------------
-
+                    
                     if (
-                        npc_name.strip().lower()
-                        == quest_name.strip().lower()
+                        quest_name
                         and npc_name
+                        and npc_name.strip().lower()
+                        == quest_name.strip().lower()
                     ):
                         npc_name = ""
 
