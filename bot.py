@@ -5299,7 +5299,6 @@ async def run_update_db(
                     guild_id
                 FROM item_database
                 ORDER BY item_name ASC
-                LIMIT 20
                 """
             )
 
