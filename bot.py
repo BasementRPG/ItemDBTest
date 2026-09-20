@@ -5147,7 +5147,6 @@ class UpdateDBTermModal(discord.ui.Modal, title="Enter Update Term"):
 
 
 class UpdateDBAlphabeticalSelect(discord.ui.Select):
-class UpdateDBAlphabeticalSelect(discord.ui.Select):
 
     def __init__(self, parent_view):
 
