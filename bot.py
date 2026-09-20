@@ -5103,7 +5103,7 @@ async def update_db(interaction: discord.Interaction):
     await interaction.response.send_message(
         "🔄 **Fetching data, please wait...**\n\n"
         "⏱️ The updater is intentionally spacing requests out "
-        "to avoid rate limits.",
+        "to avoid rate limits. \n\n",
         view=view,
         ephemeral=True
     )
@@ -5292,6 +5292,8 @@ async def run_update_db(
                     npc_name,
                     item_stats,
                     quest_name,
+                    item_image,
+                    item_msg_id,
                     npc_image,
                     npc_level,
                     guild_id
@@ -5801,6 +5803,213 @@ async def run_update_db(
                 if stats_changed:
                     changes["item_stats"] = wiki_item_stats
 
+                
+                # -------------------------------------------------
+                # REGENERATE ITEM IMAGE
+                #
+                # If the existing stats contained numbers and
+                # the Wiki stats changed, regenerate the image
+                # using the NEW Wiki stats.
+                # -------------------------------------------------
+
+                if regenerate_item_image:
+
+                    print(
+                        f"🖼️ Regenerating item image for "
+                        f"{item_name} because item stats changed."
+                    )
+
+                    try:
+
+                        # ---------------------------------------------
+                        # Create new image using the existing format
+                        # ---------------------------------------------
+
+                        image = Image.open(
+                            "assets/backgrounds/itembg.png"
+                        ).convert("RGBA")
+
+                        draw = ImageDraw.Draw(image)
+
+                        try:
+
+                            font_title = ImageFont.truetype(
+                                "assets/WinthorpeScB.ttf",
+                                28
+                            )
+
+                            font_stats = ImageFont.truetype(
+                                "assets/Winthorpe.ttf",
+                                16
+                            )
+
+                        except Exception:
+
+                            font_title = ImageFont.load_default()
+                            font_stats = ImageFont.load_default()
+
+                        # ---------------------------------------------
+                        # Draw title
+                        # ---------------------------------------------
+
+                        draw.text(
+                            (40, 3),
+                            item_name,
+                            font=font_title,
+                            fill="white"
+                        )
+
+                        # ---------------------------------------------
+                        # Draw NEW Wiki stats
+                        # ---------------------------------------------
+
+                        lines = []
+
+                        for line in wiki_item_stats.split("\n"):
+
+                            lines.extend(
+                                wrap(
+                                    line,
+                                    width=70
+                                )
+                            )
+
+                        y = 55
+
+                        for line in lines:
+
+                            draw.text(
+                                (110, y),
+                                line,
+                                font=font_stats,
+                                fill=(255, 255, 255)
+                            )
+
+                            y += 18 + 5
+
+                        # ---------------------------------------------
+                        # Convert image to PNG buffer
+                        # ---------------------------------------------
+
+                        buffer = io.BytesIO()
+
+                        image.save(
+                            buffer,
+                            format="PNG"
+                        )
+
+                        buffer.seek(0)
+
+                        # ---------------------------------------------
+                        # Get upload channel
+                        # ---------------------------------------------
+
+                        guild = bot.get_guild(
+                            UPLOAD_GUILD_ID
+                        )
+
+                        upload_channel = (
+                            guild.get_channel(
+                                UPLOAD_CHANNEL_ID
+                            )
+                            if guild
+                            else None
+                        )
+
+                        if upload_channel:
+
+                            # -----------------------------------------
+                            # Delete old generated image
+                            # -----------------------------------------
+
+                            old_item_msg_id = (
+                                db_item["item_msg_id"]
+                            )
+
+                            if old_item_msg_id:
+
+                                try:
+
+                                    old_msg = (
+                                        await upload_channel.fetch_message(
+                                            int(old_item_msg_id)
+                                        )
+                                    )
+
+                                    await old_msg.delete()
+
+                                    print(
+                                        f"🗑️ Deleted old item image "
+                                        f"for {item_name}"
+                                    )
+
+                                except discord.NotFound:
+
+                                    pass
+
+                                except Exception as e:
+
+                                    print(
+                                        f"⚠️ Could not delete old "
+                                        f"item image for "
+                                        f"{item_name}: {e}"
+                                    )
+
+                            # -----------------------------------------
+                            # Upload regenerated image
+                            # -----------------------------------------
+
+                            msg = await upload_channel.send(
+                                content=(
+                                    f"📦 Generated image for "
+                                    f"`{item_name}` "
+                                    f"(Wiki Update)"
+                                ),
+                                file=discord.File(
+                                    buffer,
+                                    filename=(
+                                        f"{item_name.replace(' ', '_')}.png"
+                                    )
+                                )
+                            )
+
+                            new_item_image_url = (
+                                msg.attachments[0].url
+                            )
+
+                            new_item_msg_id = msg.id
+
+                            # -----------------------------------------
+                            # Save new image information
+                            # -----------------------------------------
+
+                            changes["item_image"] = (
+                                new_item_image_url
+                            )
+
+                            changes["item_msg_id"] = (
+                                new_item_msg_id
+                            )
+
+                            print(
+                                f"✅ Generated new item image "
+                                f"for {item_name}"
+                            )
+
+                        else:
+
+                            print(
+                                f"⚠️ Upload channel not found. "
+                                f"Could not regenerate image "
+                                f"for {item_name}"
+                            )
+
+                    except Exception as e:
+
+                        print(
+                            f"❌ Failed to regenerate item image "
+                            f"for {item_name}: {e}"
+                        )
                 # -------------------------------------------------
                 # ZONE
                 #
