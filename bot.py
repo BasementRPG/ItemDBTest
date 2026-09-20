@@ -2940,13 +2940,18 @@ async def run_item_db(
                 ])
 
             
+            
             # 2H Bludgeoning
             elif skill_lower == "2h bludgeoning":
             
                 where_clauses.append(
                     """
-                    item_stats ILIKE $%d
-                    AND (
+                    (
+                        LOWER(item_slot) = 'primary'
+                        OR item_stats ILIKE $%d
+                    )
+                    AND
+                    (
                         (
                             item_stats ILIKE $%d
                             AND item_stats ILIKE $%d
