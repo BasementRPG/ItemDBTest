@@ -572,44 +572,91 @@ async def fetch_wiki_item_data(item_name):
             if actual_title.lower() != item_name.lower():
                 return None
 
-            # ---------------------------------------------------------
-            # Drop Information
-            # ---------------------------------------------------------
 
+            # ---------------------------------------------------------
+            # Drops From
+            # ---------------------------------------------------------
+            
             npc_name = ""
             zone_name = ""
-
+            
             drops_section = soup.find(
                 "h2",
                 id="Drops_From"
             )
-
+            
             if drops_section:
-
-                zone_tag = drops_section.find_next("p")
-
-                if zone_tag:
-                    zone_name = zone_tag.get_text(
-                        strip=True
-                    )
-
-                npc_list = drops_section.find_next("ul")
-
-                if npc_list:
-
-                    npc_links = npc_list.find_all("a")
-
-                    if npc_links:
-                        npc_name = ", ".join(
-                            a.get_text(strip=True)
-                            for a in npc_links
+            
+                # The Wiki places the Drops From content immediately
+                # after the heading wrapper.
+                drops_heading_wrapper = drops_section.parent
+            
+                if drops_heading_wrapper:
+            
+                    # Look only at the immediate siblings of the
+                    # Drops From heading.
+                    current_sibling = drops_heading_wrapper.find_next_sibling()
+            
+                    # Find the zone paragraph first.
+                    if current_sibling and current_sibling.name == "p":
+            
+                        zone_name = current_sibling.get_text(
+                            " ",
+                            strip=True
                         )
-                    else:
-                        npc_name = ", ".join(
-                            li.get_text(strip=True)
-                            for li in npc_list.find_all("li")
+            
+                        # The NPC list should be the next sibling.
+                        current_sibling = current_sibling.find_next_sibling()
+            
+                    # IMPORTANT:
+                    # Only accept the UL directly associated with
+                    # Drops From.
+                    #
+                    # This prevents a Related Quests or Player Crafted
+                    # list from being mistaken for an NPC.
+                    if current_sibling and current_sibling.name == "ul":
+            
+                        npc_links = current_sibling.find_all(
+                            "a",
+                            href=True
                         )
-
+            
+                        if npc_links:
+            
+                            npc_names = []
+            
+                            for link in npc_links:
+            
+                                name = link.get_text(
+                                    " ",
+                                    strip=True
+                                )
+            
+                                if name and name not in npc_names:
+                                    npc_names.append(name)
+            
+                            npc_name = ", ".join(npc_names)
+            
+                        else:
+            
+                            # Fallback for plain-text NPC entries.
+                            npc_items = current_sibling.find_all("li")
+            
+                            npc_names = []
+            
+                            for li in npc_items:
+            
+                                name = li.get_text(
+                                    " ",
+                                    strip=True
+                                )
+            
+                                if name and name not in npc_names:
+                                    npc_names.append(name)
+            
+                            npc_name = ", ".join(npc_names)
+            
+            
             # ---------------------------------------------------------
             # Related Quests
             # ---------------------------------------------------------
@@ -623,17 +670,12 @@ async def fetch_wiki_item_data(item_name):
             
             if quest_section:
             
-                # The Wiki places the actual quest <ul> immediately
-                # after the Related quests heading wrapper.
                 quest_heading_wrapper = quest_section.parent
             
                 if quest_heading_wrapper:
             
                     quest_list = quest_heading_wrapper.find_next_sibling()
             
-                    # Only accept the UL directly following Related quests.
-                    # This prevents Player_crafted's UL from being
-                    # mistaken for a Related Quest.
                     if quest_list and quest_list.name == "ul":
             
                         quest_links = quest_list.find_all(
@@ -657,8 +699,11 @@ async def fetch_wiki_item_data(item_name):
             
                             quest_name = ", ".join(quest_names)
             
-            # Only clear the NPC when there is actually a quest
-            # with the exact same name.
+            
+            # ---------------------------------------------------------
+            # If NPC and quest are identical, clear NPC
+            # ---------------------------------------------------------
+            
             if (
                 quest_name
                 and npc_name
@@ -666,76 +711,145 @@ async def fetch_wiki_item_data(item_name):
                 == quest_name.strip().lower()
             ):
                 npc_name = ""
-
+            
+            
             # ---------------------------------------------------------
             # NPC Details
             # ---------------------------------------------------------
-
+            
             npc_image = ""
             npc_level = ""
-
+            
             if npc_name:
-
+            
+                # Only use the first NPC when multiple NPCs are listed.
                 first_npc = (
                     npc_name
                     .split(",")[0]
                     .strip()
-                    .replace(" ", "_")
                 )
-
+            
+                # Build the Wiki page URL safely.
+                npc_page_name = first_npc.replace(
+                    " ",
+                    "_"
+                )
+            
                 npc_url = (
-                    f"{wiki_base}/wiki/{first_npc}"
+                    f"{wiki_base}/wiki/{npc_page_name}"
                 )
-
+            
                 try:
-
+            
                     async with session.get(
                         npc_url,
                         ssl=False,
                         timeout=aiohttp.ClientTimeout(total=20)
                     ) as npc_resp:
-
+            
                         if npc_resp.status == 200:
-
-                            npc_html = await npc_resp.text()
-
+            
+                            npc_html = await npc_resp.text(
+                                errors="ignore"
+                            )
+            
                             npc_soup = BeautifulSoup(
                                 npc_html,
                                 "html.parser"
                             )
-
-                            file_span = npc_soup.select_one(
-                                'span[typeof="mw:File"] img'
-                            )
-
-                            if file_span:
-
-                                src = file_span.get(
-                                    "src",
-                                    ""
+            
+                            # -------------------------------------------------
+                            # NPC Image
+                            # -------------------------------------------------
+            
+                            npc_img = None
+            
+                            # Try the Wiki's normal file image first.
+                            image_selectors = [
+                                'span[typeof="mw:File"] img',
+                                'span[typeof="mw:Image"] img',
+                                'figure img',
+                                'table.infobox img',
+                                'table.wikitable img',
+                                'img'
+                            ]
+            
+                            for selector in image_selectors:
+            
+                                candidate = npc_soup.select_one(
+                                    selector
                                 )
-
-                                npc_image = (
-                                    f"https:{src}"
-                                    if src.startswith("//")
-                                    else src
-                                )
-
+            
+                                if candidate:
+            
+                                    src = (
+                                        candidate.get("src")
+                                        or candidate.get("data-src")
+                                        or candidate.get("data-original")
+                                        or ""
+                                    )
+            
+                                    if src:
+                                        npc_img = src
+                                        break
+            
+                            if npc_img:
+            
+                                # Protocol-relative URL
+                                if npc_img.startswith("//"):
+            
+                                    npc_image = (
+                                        f"https:{npc_img}"
+                                    )
+            
+                                # Root-relative Wiki image URL
+                                elif npc_img.startswith("/"):
+            
+                                    npc_image = (
+                                        "https://monstersandmemories."
+                                        "miraheze.org"
+                                        f"{npc_img}"
+                                    )
+            
+                                # Already a complete URL
+                                elif npc_img.startswith("http"):
+            
+                                    npc_image = npc_img
+            
+                                else:
+            
+                                    # Relative image URL
+                                    npc_image = (
+                                        f"{wiki_base}/{npc_img.lstrip('/')}"
+                                    )
+            
+                            # -------------------------------------------------
+                            # NPC Level
+                            # -------------------------------------------------
+            
                             mob_stats = npc_soup.find(
                                 "table",
                                 class_="mobStatsBox"
                             )
-
+            
                             if mob_stats:
-
-                                tds = mob_stats.find_all("td")
-
+            
+                                tds = mob_stats.find_all(
+                                    "td"
+                                )
+            
                                 if len(tds) >= 3:
-                                    npc_level = tds[2].get_text(
-                                        strip=True
+            
+                                    npc_level = (
+                                        tds[2]
+                                        .get_text(
+                                            " ",
+                                            strip=True
+                                        )
                                     )
-
+            
                 except Exception as e:
+            
                     print(
                         f"⚠️ Failed NPC fetch "
                         f"{npc_url}: {e}"
