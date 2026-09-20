@@ -5103,6 +5103,192 @@ class UpdateDBView(discord.ui.View):
         )
 
 
+class UpdateDBTermModal(discord.ui.Modal, title="Enter Update Term"):
+
+    update_term = discord.ui.TextInput(
+        label="Item Name Search",
+        placeholder="Enter part of an item name...",
+        required=True,
+        max_length=100
+    )
+
+    async def on_submit(self, interaction: discord.Interaction):
+
+        term = self.update_term.value.strip()
+
+        if not term:
+            await interaction.response.send_message(
+                "⚠️ Please enter an update term.",
+                ephemeral=True
+            )
+            return
+
+        await interaction.response.send_message(
+            f"🔎 **Starting Update Term:** `{term}`\n\n"
+            f"Only items with **{term}** somewhere in their item name "
+            f"will be checked.",
+            ephemeral=True
+        )
+
+        await run_update_db(
+            interaction,
+            update_term=term
+        )
+
+
+class UpdateDBAlphabeticalSelect(discord.ui.Select):
+
+    def __init__(self, parent_view):
+
+        self.parent_view = parent_view
+
+        options = [
+            discord.SelectOption(
+                label="A–E",
+                description="Update items beginning with A, B, C, D, or E",
+                value="A-E"
+            ),
+            discord.SelectOption(
+                label="F–J",
+                description="Update items beginning with F, G, H, I, or J",
+                value="F-J"
+            ),
+            discord.SelectOption(
+                label="K–O",
+                description="Update items beginning with K, L, M, N, or O",
+                value="K-O"
+            ),
+            discord.SelectOption(
+                label="P–T",
+                description="Update items beginning with P, Q, R, S, or T",
+                value="P-T"
+            ),
+            discord.SelectOption(
+                label="U–Z",
+                description="Update items beginning with U, V, W, X, Y, or Z",
+                value="U-Z"
+            )
+        ]
+
+        super().__init__(
+            placeholder="Select alphabetical section...",
+            options=options,
+            min_values=1,
+            max_values=1
+        )
+
+    async def callback(self, interaction: discord.Interaction):
+
+        ranges = {
+            "A-E": ("A", "E"),
+            "F-J": ("F", "J"),
+            "K-O": ("K", "O"),
+            "P-T": ("P", "T"),
+            "U-Z": ("U", "Z")
+        }
+
+        selected_range = self.values[0]
+
+        start_letter, end_letter = ranges[selected_range]
+
+        self.parent_view.selected_range = selected_range
+        self.parent_view.start_letter = start_letter
+        self.parent_view.end_letter = end_letter
+
+        await interaction.response.edit_message(
+            content=(
+                "📚 **Update Database**\n\n"
+                f"Selected section: **{selected_range}**\n\n"
+                "Choose **Update** to update this alphabetical section, "
+                "or **Enter Update Term** to search for a specific item name."
+            ),
+            view=self.parent_view
+        )
+
+
+class UpdateDBButton(discord.ui.Button):
+
+    def __init__(self):
+
+        super().__init__(
+            label="Update",
+            style=discord.ButtonStyle.success,
+            emoji="🔄"
+        )
+
+    async def callback(self, interaction: discord.Interaction):
+
+        view = self.view
+
+        if not view.selected_range:
+            await interaction.response.send_message(
+                "⚠️ Please select an alphabetical section first.",
+                ephemeral=True
+            )
+            return
+
+        selected_range = view.selected_range
+        start_letter = view.start_letter
+        end_letter = view.end_letter
+
+        await interaction.response.edit_message(
+            content=(
+                f"🔄 **Starting Database Update: {selected_range}**\n\n"
+                f"Checking items beginning with "
+                f"**{start_letter}–{end_letter}**."
+            ),
+            view=None
+        )
+
+        await run_update_db(
+            interaction,
+            start_letter=start_letter,
+            end_letter=end_letter
+        )
+
+
+class UpdateDBTermButton(discord.ui.Button):
+
+    def __init__(self):
+
+        super().__init__(
+            label="Enter Update Term",
+            style=discord.ButtonStyle.primary,
+            emoji="🔎"
+        )
+
+    async def callback(self, interaction: discord.Interaction):
+
+        await interaction.response.send_modal(
+            UpdateDBTermModal()
+        )
+
+
+class UpdateDBView(discord.ui.View):
+
+    def __init__(self):
+
+        super().__init__(timeout=120)
+
+        self.selected_range = None
+        self.start_letter = None
+        self.end_letter = None
+
+        self.add_item(
+            UpdateDBAlphabeticalSelect(self)
+        )
+
+        self.add_item(
+            UpdateDBButton()
+        )
+
+        self.add_item(
+            UpdateDBTermButton()
+        )
+
+
+
+
 @bot.tree.command(name="update_db", description="Compare existing DB items with the Wiki and update any changed fields.")
 @app_commands.checks.has_permissions(administrator=True)
 async def update_db(interaction: discord.Interaction):
@@ -5110,9 +5296,10 @@ async def update_db(interaction: discord.Interaction):
     view = UpdateDBView()
 
     await interaction.response.send_message(
-        "🔄 **Fetching data, please wait...**\n\n"
-        "⏱️ The updater is intentionally spacing requests out "
-        "to avoid rate limits. \n\n",
+        "📚 **Update Database**\n\n"
+        "Select the alphabetical section you want to update.\n\n"
+        "You can also use **Enter Update Term** to search for "
+        "a partial item name.",
         view=view,
         ephemeral=True
     )
@@ -5125,7 +5312,9 @@ async def update_db(interaction: discord.Interaction):
 
 async def run_update_db(
     interaction: discord.Interaction,
-    update_view=None
+    start_letter=None,
+    end_letter=None,
+    update_term=None
 ):
 
     base_url = "https://monstersandmemories.miraheze.org/wiki"
@@ -5286,30 +5475,64 @@ async def run_update_db(
     try:
 
         # -----------------------------------------------------
-        # Get EVERY item from the database
+        # Get Item from the database
         # -----------------------------------------------------
 
         async with db_pool.acquire() as conn:
-
-            db_items = await conn.fetch(
-                """
-                SELECT
-                    id,
-                    item_name,
-                    zone_name,
-                    zone_area,
-                    npc_name,
-                    item_stats,
-                    quest_name,
-                    item_image,
-                    item_msg_id,
-                    npc_image,
-                    npc_level,
-                    guild_id
-                FROM item_database
-                ORDER BY item_name ASC
-                """
-            )
+        
+            # ---------------------------------------------------------
+            # Enter Update Term
+            # ---------------------------------------------------------
+        
+            if update_term:
+        
+                db_items = await conn.fetch(
+                    """
+                    SELECT id, item_name, zone_name, zone_area, npc_name,
+                           item_stats, crafted_name, crafting_recipe,
+                           quest_name, npc_image, npc_level, guild_id
+                    FROM item_database
+                    WHERE item_name ILIKE $1
+                    ORDER BY item_name ASC
+                    """,
+                    f"%{update_term}%"
+                )
+        
+            # ---------------------------------------------------------
+            # Alphabetical Range
+            # ---------------------------------------------------------
+        
+            elif start_letter and end_letter:
+        
+                db_items = await conn.fetch(
+                    """
+                    SELECT id, item_name, zone_name, zone_area, npc_name,
+                           item_stats, crafted_name, crafting_recipe,
+                           quest_name, npc_image, npc_level, guild_id
+                    FROM item_database
+                    WHERE LEFT(UPPER(TRIM(item_name)), 1)
+                          BETWEEN $1 AND $2
+                    ORDER BY item_name ASC
+                    """,
+                    start_letter,
+                    end_letter
+                )
+        
+            # ---------------------------------------------------------
+            # Fallback - All Items
+            # ---------------------------------------------------------
+        
+            else:
+        
+                db_items = await conn.fetch(
+                    """
+                    SELECT id, item_name, zone_name, zone_area, npc_name,
+                           item_stats, crafted_name, crafting_recipe,
+                           quest_name, npc_image, npc_level, guild_id
+                    FROM item_database
+                    ORDER BY item_name ASC
+                    """
+                )
 
         total_items = len(db_items)
 
