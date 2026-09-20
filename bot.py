@@ -3107,7 +3107,7 @@ async def run_item_db(
         
         tf = (type_filter or "with_stats").lower()
         
-        if tf == "with_stats":
+        if tf == "with_stats" and not search_query:
         
             # These are the ONLY stats that qualify an item for "With Stats"
             allowed_stats = [
