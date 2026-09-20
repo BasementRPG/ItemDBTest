@@ -3672,8 +3672,7 @@ class WikiView(discord.ui.View):
             if npc_name != "":
                 embed.add_field(name="👹 Npc", value=f"{npc_name}" f"\n{npc_level}", inline=True)
             
-            if item["item_image"] == "":
-                embed.add_field(name="⚔️ Item Stats", value=item["item_stats"], inline=False)
+
             if item["item_image"] != "":
                 embed.set_image(url=item["item_image"])
             if item["npc_image"] != "":
