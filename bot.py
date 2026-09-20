@@ -5265,7 +5265,8 @@ class UpdateDBButton(discord.ui.Button):
         await run_update_db(
             interaction,
             start_letter=start_letter,
-            end_letter=end_letter
+            end_letter=end_letter,
+            update_view=update_view
         )
 
 
@@ -5609,12 +5610,15 @@ async def run_update_db(
         ) as session:
         
             for db_item in db_items:
-        
+            
                 # -------------------------------------------------
                 # STOP CHECK
                 # -------------------------------------------------
-
-        
+            
+                if update_view and update_view.stopped:
+                    print("🛑 Database update stopped by user.")
+                    break
+            
                 item_name = (
                     db_item["item_name"]
                     or ""
