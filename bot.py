@@ -5290,7 +5290,7 @@ class UpdateDBTermButton(discord.ui.Button):
     async def callback(self, interaction: discord.Interaction):
 
         await interaction.response.send_modal(
-            UpdateDBTermModal(interaction.message)
+            UpdateDBTermModal(interaction)
         )
 
 
