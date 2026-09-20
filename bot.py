@@ -1442,12 +1442,17 @@ class WikiFoundDataView(discord.ui.View):
         label="✏️ Manually Enter",
         style=discord.ButtonStyle.primary
     )
+
     async def manually_enter(
         self,
         interaction: discord.Interaction,
         button: discord.ui.Button
     ):
         try:
+            # Acknowledge the button immediately so Discord does not
+            # expire the interaction while images are being uploaded.
+            await interaction.response.defer()
+    
             upload_channel = await ensure_upload_channel1(
                 interaction.guild
             )
@@ -1502,7 +1507,7 @@ class WikiFoundDataView(discord.ui.View):
             view.item_name_from_check = self.item_name
             view.wiki_data = self.wiki_data
 
-            await interaction.response.edit_message(
+            await interaction.edit_original_response(
                 content=(
                     "✏️ Continue with the manual item entry.\n\n"
                     "Select the **Slot**, **Classes**, and **Stats**:"
@@ -1521,11 +1526,24 @@ class WikiFoundDataView(discord.ui.View):
                 f"'{self.item_name}': {e}"
             )
 
-            if not interaction.response.is_done():
-                await interaction.response.send_message(
-                    f"❌ Could not start manual entry: {e}",
-                    ephemeral=True
+
+            except Exception as e:
+                print(
+                    f"❌ Failed to start manual entry for "
+                    f"'{self.item_name}': {e}"
                 )
+            
+                try:
+                    await interaction.edit_original_response(
+                        content=f"❌ Could not start manual entry: {e}",
+                        embed=None,
+                        view=None
+                    )
+                except Exception as response_error:
+                    print(
+                        f"❌ Could not send manual entry error message: "
+                        f"{response_error}"
+                    )
 
     @discord.ui.button(
         label="❌ Cancel",
