@@ -5252,6 +5252,7 @@ class UpdateDBButton(discord.ui.Button):
         selected_range = view.selected_range
         start_letter = view.start_letter
         end_letter = view.end_letter
+        update_view = UpdateDBStopView()
 
         await interaction.response.edit_message(
             content=(
@@ -5259,7 +5260,7 @@ class UpdateDBButton(discord.ui.Button):
                 f"Checking items beginning with "
                 f"**{start_letter}–{end_letter}**."
             ),
-            view=None
+            view=update_view
         )
 
         await run_update_db(
