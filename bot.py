@@ -1520,29 +1520,24 @@ class WikiFoundDataView(discord.ui.View):
 
             self.stop()
 
+        
         except Exception as e:
             print(
                 f"❌ Failed to start manual entry for "
                 f"'{self.item_name}': {e}"
             )
-
-
-            except Exception as e:
-                print(
-                    f"❌ Failed to start manual entry for "
-                    f"'{self.item_name}': {e}"
+        
+            try:
+                await interaction.edit_original_response(
+                    content=f"❌ Could not start manual entry: {e}",
+                    embed=None,
+                    view=None
                 )
-            
-                try:
-                    await interaction.edit_original_response(
-                        content=f"❌ Could not start manual entry: {e}",
-                        embed=None,
-                        view=None
-                    )
-                except Exception as response_error:
-                    print(
-                        f"❌ Could not send manual entry error message: "
-                        f"{response_error}"
+            except Exception as response_error:
+                print(
+                    f"❌ Could not send manual entry error message: "
+                    f"{response_error}"
+                )  f"{response_error}"
                     )
 
     @discord.ui.button(
