@@ -4015,7 +4015,7 @@ async def fetch_wiki_items(slot_name: str):
                                 if a.get_text(strip=True)
                             ]
                         
-                            if len(npc_names) > 4:
+                            if len(npc_names) > 3:
                                 npc_name = "Trash Mobs"
                             else:
                                 npc_name = ", ".join(npc_names)
@@ -5792,11 +5792,11 @@ async def run_update_db(
                                             name
                                         )
 
-                                wiki_npc_name = (
-                                    ", ".join(
-                                        npc_names
-                                    )
-                                )
+                               
+                                if len(npc_names) >= 4:
+                                    wiki_npc_name = "Trash Mobs"
+                                else:
+                                    wiki_npc_name = ", ".join(npc_names)
 
                             else:
 
@@ -5825,11 +5825,10 @@ async def run_update_db(
                                             name
                                         )
 
-                                wiki_npc_name = (
-                                    ", ".join(
-                                        npc_names
-                                    )
-                                )
+                                if len(npc_names) >= 3:
+                                    wiki_npc_name = "Trash Mobs"
+                                else:
+                                    wiki_npc_name = ", ".join(npc_names)
 
                 # =================================================
                 # RELATED QUEST
@@ -5912,7 +5911,7 @@ async def run_update_db(
                 # NPC DETAILS / IMAGE
                 # =================================================
 
-                if wiki_npc_name:
+                if wiki_npc_name and wiki_npc_name.strip().lower() != "trash mobs":
 
                     first_npc = (
                         wiki_npc_name
