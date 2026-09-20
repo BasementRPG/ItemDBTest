@@ -5302,7 +5302,7 @@ async def run_update_db(
                     npc_level,
                     guild_id
                 FROM item_database
-                ORDER BY RANDOM()
+                ORDER BY ASC()
                 LIMIT 20
                 """
             )
