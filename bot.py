@@ -4013,9 +4013,6 @@ async def fetch_wiki_items(slot_name: str):
                                 npc_name = "Trash Mobs"
                             else:
                                 npc_name = ", ".join(npc_names)
-
-                           
-                            else:
                             
                                 # Fallback: plain text <li>
                                 npc_items = [
