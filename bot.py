@@ -6991,11 +6991,16 @@ async def fetch_wiki_page(url):
 
 async def get_wiki_zones():
     """
-    Read the Zones page and return the zone names and URLs.
+    Read the Monsters & Memories Zones page.
 
-    The Zones page contains zone links inside the zone sections.
-    Cities and dungeons are also linked, so we only collect
-    links from the Outdoors sections.
+    The page is organized into region tables. Each region
+    contains three zone categories:
+
+        Outdoors
+        Cities
+        Dungeons
+
+    Collect every article link belonging to those categories.
     """
 
     html = await fetch_wiki_page(WIKI_ZONES_URL)
@@ -7004,66 +7009,106 @@ async def get_wiki_zones():
 
     zones = []
 
-    # --------------------------------------------------------
-    # Find each Outdoors section
-    # --------------------------------------------------------
+    valid_categories = {
+        "outdoors",
+        "cities",
+        "dungeons"
+    }
 
-    for bold_tag in soup.find_all(["b", "strong"]):
+    # ========================================================
+    # Process each region table
+    # ========================================================
 
-        if bold_tag.get_text(
-            " ",
-            strip=True
-        ).lower() != "outdoors":
-            continue
+    for table in soup.find_all("table"):
 
-        # Find the nearest containing element.
-        parent = bold_tag.parent
+        # ----------------------------------------------------
+        # Find every cell in this table
+        # ----------------------------------------------------
 
-        if parent is None:
-            continue
+        for cell in table.find_all("td"):
 
-        # Search for links in the surrounding paragraph/div.
-        container = parent.parent
+            category = None
 
-        if container is None:
-            continue
+            # ------------------------------------------------
+            # Look for category heading inside this cell
+            # ------------------------------------------------
 
-        for link in container.find_all("a", href=True):
+            for bold in cell.find_all(
+                ["b", "strong"]
+            ):
 
-            href = link.get("href", "").strip()
+                text = bold.get_text(
+                    " ",
+                    strip=True
+                ).lower()
 
-            zone_name = link.get_text(
-                " ",
-                strip=True
-            )
+                if text in valid_categories:
 
-            if not zone_name:
+                    category = text
+
+                    break
+
+            if category is None:
                 continue
 
-            if not href.startswith("/wiki/"):
-                continue
+            # ------------------------------------------------
+            # Get all links in this category cell
+            # ------------------------------------------------
 
-            # Ignore File pages and special pages.
-            if href.startswith("/wiki/File:"):
-                continue
+            for link in cell.find_all(
+                "a",
+                href=True
+            ):
 
-            if ":" in href.split("/wiki/", 1)[1]:
-                continue
+                href = link.get(
+                    "href",
+                    ""
+                ).strip()
 
-            zone_url = (
-                href
-                if href.startswith("http")
-                else f"{WIKI_BASE_URL}{href}"
-            )
+                zone_name = link.get_text(
+                    " ",
+                    strip=True
+                )
 
-            zones.append({
-                "name": zone_name,
-                "url": zone_url
-            })
+                if not zone_name:
+                    continue
 
-    # --------------------------------------------------------
-    # Remove duplicates
-    # --------------------------------------------------------
+                if not href.startswith("/wiki/"):
+                    continue
+
+                article_path = href.split(
+                    "/wiki/",
+                    1
+                )[1]
+
+                # Ignore:
+                # File:
+                # Category:
+                # Special:
+                # Template:
+                # etc.
+                if ":" in article_path:
+                    continue
+
+                # ------------------------------------------------
+                # Build URL
+                # ------------------------------------------------
+
+                zone_url = (
+                    href
+                    if href.startswith("http")
+                    else f"{WIKI_BASE_URL}{href}"
+                )
+
+                zones.append({
+                    "name": zone_name,
+                    "url": zone_url,
+                    "category": category
+                })
+
+    # ========================================================
+    # Remove duplicate pages
+    # ========================================================
 
     unique_zones = {}
 
@@ -7072,23 +7117,50 @@ async def get_wiki_zones():
         key = zone["url"].lower()
 
         if key not in unique_zones:
+
             unique_zones[key] = zone
 
-    return list(unique_zones.values())
+    zones = list(
+        unique_zones.values()
+    )
+
+    # ========================================================
+    # Sort alphabetically
+    # ========================================================
+
+    zones.sort(
+        key=lambda zone: zone["name"].lower()
+    )
+
+    # ========================================================
+    # Debug output
+    # ========================================================
+
+    print(
+        f"🗺️ Found {len(zones)} wiki zones."
+    )
+
+    for zone in zones:
+
+        print(
+            f"   {zone['name']} "
+            f"[{zone['category'].title()}]"
+        )
+
+    return zones
     
 
 async def get_zone_maps(zone_url):
     """
-    Get every wiki map image from a zone page.
+    Get every map image from a zone page.
 
-    A map is identified by a <figure> containing a link to
-    a MediaWiki File page.
+    IMPORTANT:
+    The first image on every zone page is NOT a map.
+    It is a random screenshot/concept image and must always
+    be skipped.
 
-    Returns a list of dictionaries containing:
-        file_name
-        wiki_file_url
-        image_url
-        caption
+    After skipping the first image, maps are identified by
+    <figure> elements containing a MediaWiki File: link.
     """
 
     html = await fetch_wiki_page(zone_url)
@@ -7097,17 +7169,61 @@ async def get_zone_maps(zone_url):
 
     maps_found = []
 
-    # --------------------------------------------------------
-    # Find every figure on the page
-    # --------------------------------------------------------
+    # ========================================================
+    # Get ALL images on the page
+    # ========================================================
+
+    all_images = soup.find_all("img")
+
+    if not all_images:
+        return []
+
+    # ========================================================
+    # First image is ALWAYS the zone screenshot.
+    # Do not process it.
+    # ========================================================
+
+    first_image = all_images[0]
+
+    print(
+        f"   ⏭️ Skipping first zone image: "
+        f"{first_image.get('src', 'unknown')}"
+    )
+
+    # ========================================================
+    # Find every figure containing a MediaWiki File link
+    # ========================================================
 
     for figure in soup.find_all("figure"):
 
+        image = figure.find("img")
+
+        if image is None:
+            continue
+
+        # ----------------------------------------------------
+        # Skip the first image even if it appears inside a
+        # figure.
+        # ----------------------------------------------------
+
+        if image is first_image:
+            continue
+
+        # ----------------------------------------------------
+        # Find the File: link associated with this image
+        # ----------------------------------------------------
+
         file_link = None
 
-        for link in figure.find_all("a", href=True):
+        for link in figure.find_all(
+            "a",
+            href=True
+        ):
 
-            href = link.get("href", "").strip()
+            href = link.get(
+                "href",
+                ""
+            ).strip()
 
             if "/wiki/File:" in href:
 
@@ -7115,15 +7231,13 @@ async def get_zone_maps(zone_url):
 
                 break
 
+        # Not a MediaWiki file/map figure
         if file_link is None:
             continue
 
-        href = file_link.get("href", "").strip()
-
-        image = figure.find("img")
-
-        if image is None:
-            continue
+        # ----------------------------------------------------
+        # Get image URL
+        # ----------------------------------------------------
 
         image_url = (
             image.get("src")
@@ -7134,41 +7248,70 @@ async def get_zone_maps(zone_url):
             continue
 
         # ----------------------------------------------------
-        # Convert protocol-relative URL
+        # Convert protocol-relative URLs
         # ----------------------------------------------------
 
         if image_url.startswith("//"):
-            image_url = f"https:{image_url}"
+
+            image_url = (
+                f"https:{image_url}"
+            )
 
         elif image_url.startswith("/"):
-            image_url = f"{WIKI_BASE_URL}{image_url}"
+
+            image_url = (
+                f"{WIKI_BASE_URL}{image_url}"
+            )
 
         # ----------------------------------------------------
-        # Get original File URL
+        # Get wiki File URL
         # ----------------------------------------------------
+
+        href = file_link.get(
+            "href",
+            ""
+        ).strip()
 
         if href.startswith("//"):
-            wiki_file_url = f"https:{href}"
+
+            wiki_file_url = (
+                f"https:{href}"
+            )
 
         elif href.startswith("/"):
-            wiki_file_url = f"{WIKI_BASE_URL}{href}"
+
+            wiki_file_url = (
+                f"{WIKI_BASE_URL}{href}"
+            )
 
         elif href.startswith("http"):
+
             wiki_file_url = href
 
         else:
+
             continue
 
         # ----------------------------------------------------
         # Get filename
         # ----------------------------------------------------
 
-        file_name = href.split("/wiki/File:", 1)[-1]
-
-        # Decode MediaWiki URL encoding
         from urllib.parse import unquote
 
-        file_name = unquote(file_name)
+        if "/wiki/File:" in href:
+
+            file_name = href.split(
+                "/wiki/File:",
+                1
+            )[1]
+
+        else:
+
+            continue
+
+        file_name = unquote(
+            file_name
+        )
 
         # ----------------------------------------------------
         # Get caption
@@ -7176,9 +7319,12 @@ async def get_zone_maps(zone_url):
 
         caption = ""
 
-        figcaption = figure.find("figcaption")
+        figcaption = figure.find(
+            "figcaption"
+        )
 
         if figcaption:
+
             caption = figcaption.get_text(
                 " ",
                 strip=True
@@ -7191,20 +7337,49 @@ async def get_zone_maps(zone_url):
             "caption": caption
         })
 
-    # --------------------------------------------------------
-    # Remove duplicate image URLs
-    # --------------------------------------------------------
+    # ========================================================
+    # Remove duplicate File URLs
+    # ========================================================
 
     unique_maps = {}
 
     for map_data in maps_found:
 
-        key = map_data["wiki_file_url"].lower()
+        key = map_data[
+            "wiki_file_url"
+        ].lower()
 
         if key not in unique_maps:
+
             unique_maps[key] = map_data
 
-    return list(unique_maps.values())
+    maps_found = list(
+        unique_maps.values()
+    )
+
+    # ========================================================
+    # Debug
+    # ========================================================
+
+    print(
+        f"   🗺️ Maps found: "
+        f"{len(maps_found)}"
+    )
+
+    for map_data in maps_found:
+
+        caption = (
+            map_data["caption"]
+            or "No caption"
+        )
+
+        print(
+            f"      • "
+            f"{map_data['file_name']} "
+            f"({caption})"
+        )
+
+    return maps_found
 
 
 async def download_wiki_image(image_data):
