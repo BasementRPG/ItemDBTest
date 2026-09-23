@@ -6575,6 +6575,15 @@ async def ensure_maps_table():
             ADD COLUMN IF NOT EXISTS map_number INTEGER
         """)
 
+
+        # ----------------------------------------------------
+        # Store the original wiki image URL
+        # ----------------------------------------------------
+        await conn.execute("""
+            ALTER TABLE maps
+            ADD COLUMN IF NOT EXISTS wiki_image_url TEXT
+        """)
+        
         # ----------------------------------------------------
         # Give old maps map number 1
         # ----------------------------------------------------
@@ -6947,6 +6956,721 @@ class MapsView(discord.ui.View):
             await interaction.followup.send(
                 embeds=batch
             )
+
+# ============================================================
+# WIKI MAP UPDATE
+# ============================================================
+
+WIKI_BASE_URL = "https://monstersandmemories.miraheze.org"
+WIKI_ZONES_URL = f"{WIKI_BASE_URL}/wiki/Zones"
+
+async def fetch_wiki_page(url):
+    """
+    Download a wiki page and return its HTML.
+    """
+
+    timeout = aiohttp.ClientTimeout(total=30)
+
+    async with aiohttp.ClientSession(timeout=timeout) as session:
+
+        headers = {
+            "User-Agent": (
+                "MonstersAndMemoriesDiscordBot/1.0 "
+                "(map updater)"
+            )
+        }
+
+        async with session.get(
+            url,
+            headers=headers
+        ) as response:
+
+            response.raise_for_status()
+
+            return await response.text()
+
+async def get_wiki_zones():
+    """
+    Read the Zones page and return the zone names and URLs.
+
+    The Zones page contains zone links inside the zone sections.
+    Cities and dungeons are also linked, so we only collect
+    links from the Outdoors sections.
+    """
+
+    html = await fetch_wiki_page(WIKI_ZONES_URL)
+
+    soup = BeautifulSoup(html, "html.parser")
+
+    zones = []
+
+    # --------------------------------------------------------
+    # Find each Outdoors section
+    # --------------------------------------------------------
+
+    for bold_tag in soup.find_all(["b", "strong"]):
+
+        if bold_tag.get_text(
+            " ",
+            strip=True
+        ).lower() != "outdoors":
+            continue
+
+        # Find the nearest containing element.
+        parent = bold_tag.parent
+
+        if parent is None:
+            continue
+
+        # Search for links in the surrounding paragraph/div.
+        container = parent.parent
+
+        if container is None:
+            continue
+
+        for link in container.find_all("a", href=True):
+
+            href = link.get("href", "").strip()
+
+            zone_name = link.get_text(
+                " ",
+                strip=True
+            )
+
+            if not zone_name:
+                continue
+
+            if not href.startswith("/wiki/"):
+                continue
+
+            # Ignore File pages and special pages.
+            if href.startswith("/wiki/File:"):
+                continue
+
+            if ":" in href.split("/wiki/", 1)[1]:
+                continue
+
+            zone_url = (
+                href
+                if href.startswith("http")
+                else f"{WIKI_BASE_URL}{href}"
+            )
+
+            zones.append({
+                "name": zone_name,
+                "url": zone_url
+            })
+
+    # --------------------------------------------------------
+    # Remove duplicates
+    # --------------------------------------------------------
+
+    unique_zones = {}
+
+    for zone in zones:
+
+        key = zone["url"].lower()
+
+        if key not in unique_zones:
+            unique_zones[key] = zone
+
+    return list(unique_zones.values())
+    
+
+async def get_zone_maps(zone_url):
+    """
+    Get every wiki map image from a zone page.
+
+    A map is identified by a <figure> containing a link to
+    a MediaWiki File page.
+
+    Returns a list of dictionaries containing:
+        file_name
+        wiki_file_url
+        image_url
+        caption
+    """
+
+    html = await fetch_wiki_page(zone_url)
+
+    soup = BeautifulSoup(html, "html.parser")
+
+    maps_found = []
+
+    # --------------------------------------------------------
+    # Find every figure on the page
+    # --------------------------------------------------------
+
+    for figure in soup.find_all("figure"):
+
+        file_link = None
+
+        for link in figure.find_all("a", href=True):
+
+            href = link.get("href", "").strip()
+
+            if "/wiki/File:" in href:
+
+                file_link = link
+
+                break
+
+        if file_link is None:
+            continue
+
+        href = file_link.get("href", "").strip()
+
+        image = figure.find("img")
+
+        if image is None:
+            continue
+
+        image_url = (
+            image.get("src")
+            or image.get("data-src")
+        )
+
+        if not image_url:
+            continue
+
+        # ----------------------------------------------------
+        # Convert protocol-relative URL
+        # ----------------------------------------------------
+
+        if image_url.startswith("//"):
+            image_url = f"https:{image_url}"
+
+        elif image_url.startswith("/"):
+            image_url = f"{WIKI_BASE_URL}{image_url}"
+
+        # ----------------------------------------------------
+        # Get original File URL
+        # ----------------------------------------------------
+
+        if href.startswith("//"):
+            wiki_file_url = f"https:{href}"
+
+        elif href.startswith("/"):
+            wiki_file_url = f"{WIKI_BASE_URL}{href}"
+
+        elif href.startswith("http"):
+            wiki_file_url = href
+
+        else:
+            continue
+
+        # ----------------------------------------------------
+        # Get filename
+        # ----------------------------------------------------
+
+        file_name = href.split("/wiki/File:", 1)[-1]
+
+        # Decode MediaWiki URL encoding
+        from urllib.parse import unquote
+
+        file_name = unquote(file_name)
+
+        # ----------------------------------------------------
+        # Get caption
+        # ----------------------------------------------------
+
+        caption = ""
+
+        figcaption = figure.find("figcaption")
+
+        if figcaption:
+            caption = figcaption.get_text(
+                " ",
+                strip=True
+            )
+
+        maps_found.append({
+            "file_name": file_name,
+            "wiki_file_url": wiki_file_url,
+            "image_url": image_url,
+            "caption": caption
+        })
+
+    # --------------------------------------------------------
+    # Remove duplicate image URLs
+    # --------------------------------------------------------
+
+    unique_maps = {}
+
+    for map_data in maps_found:
+
+        key = map_data["wiki_file_url"].lower()
+
+        if key not in unique_maps:
+            unique_maps[key] = map_data
+
+    return list(unique_maps.values())
+
+
+async def download_wiki_image(image_data):
+    """
+    Download the full-resolution wiki image.
+
+    Converts a MediaWiki thumbnail URL into the original
+    static.wikitide image URL when possible.
+    """
+
+    image_url = image_data["image_url"]
+
+    # --------------------------------------------------------
+    # Try to convert thumbnail URL to original image
+    # --------------------------------------------------------
+
+    if "/thumb/" in image_url:
+
+        parts = image_url.split("/thumb/", 1)
+
+        if len(parts) == 2:
+
+            base = parts[0]
+
+            thumb_path = parts[1]
+
+            thumb_parts = thumb_path.split("/")
+
+            if len(thumb_parts) >= 4:
+
+                # Example:
+                #
+                # f/f7/WyrmsbaneCombined_v0.91.png/
+                # 600px-WyrmsbaneCombined_v0.91.png
+                #
+                original_path = "/".join(
+                    thumb_parts[:-1]
+                )
+
+                image_url = (
+                    f"{base}/{original_path}"
+                )
+
+    timeout = aiohttp.ClientTimeout(total=60)
+
+    async with aiohttp.ClientSession(
+        timeout=timeout
+    ) as session:
+
+        headers = {
+            "User-Agent": (
+                "MonstersAndMemoriesDiscordBot/1.0 "
+                "(map updater)"
+            )
+        }
+
+        async with session.get(
+            image_url,
+            headers=headers
+        ) as response:
+
+            response.raise_for_status()
+
+            return await response.read()
+
+
+async def wiki_map_exists(
+    guild_id,
+    zone_name,
+    wiki_file_url
+):
+    """
+    Check whether this exact wiki map has already been
+    imported for this guild and zone.
+    """
+
+    async with db_pool.acquire() as conn:
+
+        row = await conn.fetchrow("""
+            SELECT id
+            FROM maps
+            WHERE guild_id = $1
+              AND zone_name = $2
+              AND wiki_image_url = $3
+            LIMIT 1
+        """,
+        guild_id,
+        zone_name,
+        wiki_file_url)
+
+    return row is not None
+
+
+async def get_next_map_number(
+    guild_id,
+    zone_name
+):
+    """
+    Get the next available map number for a zone.
+    """
+
+    async with db_pool.acquire() as conn:
+
+        return await conn.fetchval("""
+            SELECT COALESCE(
+                MAX(map_number),
+                0
+            ) + 1
+            FROM maps
+            WHERE guild_id = $1
+              AND zone_name = $2
+        """,
+        guild_id,
+        zone_name)
+
+# ============================================================
+# /mapupdate
+# ============================================================
+
+@bot.tree.command(
+    name="mapupdate",
+    description="Check the wiki for new zone maps."
+)
+async def mapupdate(
+    interaction: discord.Interaction
+):
+
+    if interaction.guild is None:
+
+        await interaction.response.send_message(
+            "❌ This command can only be used in a server.",
+            ephemeral=True
+        )
+
+        return
+
+    await interaction.response.defer(
+        ephemeral=True,
+        thinking=True
+    )
+
+    guild = interaction.guild
+
+    try:
+
+        # ----------------------------------------------------
+        # Make sure the maps table exists
+        # ----------------------------------------------------
+
+        await ensure_maps_table()
+
+        # ----------------------------------------------------
+        # Get all zones from the wiki
+        # ----------------------------------------------------
+
+        zones = await get_wiki_zones()
+
+        if not zones:
+
+            await interaction.edit_original_response(
+                content=(
+                    "❌ I couldn't find any zones on the "
+                    "wiki Zones page."
+                )
+            )
+
+            return
+
+        # ----------------------------------------------------
+        # Get upload channel
+        # ----------------------------------------------------
+
+        upload_channel = await ensure_upload_channel1(
+            guild
+        )
+
+        # ----------------------------------------------------
+        # Statistics
+        # ----------------------------------------------------
+
+        zones_checked = 0
+        maps_found = 0
+        existing_maps = 0
+        new_maps = 0
+        failed_maps = 0
+
+        new_map_names = []
+        failed_map_names = []
+
+        # ----------------------------------------------------
+        # Process every zone
+        # ----------------------------------------------------
+
+        for zone in zones:
+
+            zone_name = zone["name"]
+            zone_url = zone["url"]
+
+            zones_checked += 1
+
+            print(
+                f"🗺️ Checking zone: {zone_name}"
+            )
+
+            try:
+
+                zone_maps = await get_zone_maps(
+                    zone_url
+                )
+
+            except Exception as e:
+
+                print(
+                    f"❌ Failed to read "
+                    f"{zone_name}: {e}"
+                )
+
+                continue
+
+            maps_found += len(zone_maps)
+
+            # ------------------------------------------------
+            # Process every map on this zone page
+            # ------------------------------------------------
+
+            for map_data in zone_maps:
+
+                wiki_file_url = (
+                    map_data["wiki_file_url"]
+                )
+
+                # --------------------------------------------
+                # Already imported?
+                # --------------------------------------------
+
+                if await wiki_map_exists(
+                    guild.id,
+                    zone_name,
+                    wiki_file_url
+                ):
+
+                    existing_maps += 1
+
+                    continue
+
+                try:
+
+                    print(
+                        f"🆕 New map found: "
+                        f"{zone_name} - "
+                        f"{map_data['file_name']}"
+                    )
+
+                    # ----------------------------------------
+                    # Download image
+                    # ----------------------------------------
+
+                    image_bytes = (
+                        await download_wiki_image(
+                            map_data
+                        )
+                    )
+
+                    if not image_bytes:
+
+                        raise RuntimeError(
+                            "Wiki returned an empty image."
+                        )
+
+                    # ----------------------------------------
+                    # Determine map number
+                    # ----------------------------------------
+
+                    next_map_number = (
+                        await get_next_map_number(
+                            guild.id,
+                            zone_name
+                        )
+                    )
+
+                    # ----------------------------------------
+                    # Create Discord file
+                    # ----------------------------------------
+
+                    import io
+
+                    file_buffer = io.BytesIO(
+                        image_bytes
+                    )
+
+                    discord_file = discord.File(
+                        file_buffer,
+                        filename=map_data[
+                            "file_name"
+                        ]
+                    )
+
+                    # ----------------------------------------
+                    # Upload to map upload channel
+                    # ----------------------------------------
+
+                    uploaded_message = (
+                        await upload_channel.send(
+                            file=discord_file,
+                            content=(
+                                f"🗺️ Map upload\n"
+                                f"Zone: **{zone_name}**\n"
+                                f"Map Number: "
+                                f"**{next_map_number}**\n"
+                                f"Wiki: "
+                                f"{wiki_file_url}\n"
+                                f"Source: "
+                                f"**/mapupdate**"
+                            )
+                        )
+                    )
+
+                    if not uploaded_message.attachments:
+
+                        raise RuntimeError(
+                            "Discord did not return "
+                            "an uploaded attachment."
+                        )
+
+                    map_url = (
+                        uploaded_message
+                        .attachments[0]
+                        .url
+                    )
+
+                    map_msg_id = (
+                        uploaded_message.id
+                    )
+
+                    # ----------------------------------------
+                    # Save to database
+                    # ----------------------------------------
+
+                    async with db_pool.acquire() as conn:
+
+                        await conn.execute("""
+                            INSERT INTO maps (
+                                guild_id,
+                                zone_name,
+                                map_number,
+                                map_image,
+                                wiki_image_url,
+                                map_msg_id,
+                                added_by,
+                                created_at,
+                                updated_at
+                            )
+                            VALUES (
+                                $1,
+                                $2,
+                                $3,
+                                $4,
+                                $5,
+                                $6,
+                                $7,
+                                NOW(),
+                                NOW()
+                            )
+                        """,
+                        guild.id,
+                        zone_name,
+                        next_map_number,
+                        map_url,
+                        wiki_file_url,
+                        map_msg_id,
+                        str(interaction.user))
+
+                    new_maps += 1
+
+                    new_map_names.append(
+                        f"{zone_name} - "
+                        f"Map {next_map_number}"
+                    )
+
+                    print(
+                        f"✅ Added: "
+                        f"{zone_name} - "
+                        f"Map {next_map_number}"
+                    )
+
+                except Exception as e:
+
+                    failed_maps += 1
+
+                    failed_map_names.append(
+                        f"{zone_name} - "
+                        f"{map_data['file_name']}"
+                    )
+
+                    print(
+                        f"❌ Failed to import "
+                        f"{zone_name} / "
+                        f"{map_data['file_name']}: "
+                        f"{e}"
+                    )
+
+                    import traceback
+
+                    traceback.print_exc()
+
+        # ====================================================
+        # FINAL REPORT
+        # ====================================================
+
+        result = (
+            "🗺️ **Map Update Complete**\n\n"
+            f"**Zones checked:** {zones_checked}\n"
+            f"**Maps found:** {maps_found}\n"
+            f"**Existing maps:** {existing_maps}\n"
+            f"**New maps added:** {new_maps}\n"
+            f"**Failed:** {failed_maps}"
+        )
+
+        # ----------------------------------------------------
+        # New maps
+        # ----------------------------------------------------
+
+        if new_map_names:
+
+            result += (
+                "\n\n**🆕 New Maps:**\n"
+            )
+
+            for name in new_map_names:
+
+                result += f"• {name}\n"
+
+        # ----------------------------------------------------
+        # Failed maps
+        # ----------------------------------------------------
+
+        if failed_map_names:
+
+            result += (
+                "\n**❌ Failed Maps:**\n"
+            )
+
+            for name in failed_map_names:
+
+                result += f"• {name}\n"
+
+        await interaction.edit_original_response(
+            content=result
+        )
+
+    except Exception as e:
+
+        print(
+            f"❌ Map update error: {e}"
+        )
+
+        import traceback
+
+        traceback.print_exc()
+
+        await interaction.edit_original_response(
+            content=(
+                "❌ **Map update failed.**\n\n"
+                f"Error: `{e}`"
+            )
+        )
 
 
 # ============================================================
