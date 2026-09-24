@@ -6536,10 +6536,13 @@ async def run_update_db(
             )
 
 
-
 # ============================================================
 # ====================== MAP SYSTEM ==========================
 # ============================================================
+
+# All map data is global and shared by every Discord server.
+# Every map row is stored with guild_id = 1.
+GLOBAL_MAP_GUILD_ID = 1
 
 async def ensure_maps_table():
     """
@@ -6561,6 +6564,8 @@ async def ensure_maps_table():
                 map_number INTEGER,
                 map_image TEXT NOT NULL,
                 map_msg_id BIGINT,
+                map_upload_guild_id BIGINT,
+                map_upload_channel_id BIGINT,
                 added_by TEXT,
                 created_at TIMESTAMP DEFAULT NOW(),
                 updated_at TIMESTAMP DEFAULT NOW()
@@ -6583,6 +6588,69 @@ async def ensure_maps_table():
             ALTER TABLE maps
             ADD COLUMN IF NOT EXISTS wiki_image_url TEXT
         """)
+
+        # ----------------------------------------------------
+        # Store where the Discord upload was created.
+        # This is required because map data is global and the
+        # upload may belong to a different Discord server.
+        # ----------------------------------------------------
+        await conn.execute("""
+            ALTER TABLE maps
+            ADD COLUMN IF NOT EXISTS map_upload_guild_id BIGINT
+        """)
+
+        await conn.execute("""
+            ALTER TABLE maps
+            ADD COLUMN IF NOT EXISTS map_upload_channel_id BIGINT
+        """)
+
+        # ----------------------------------------------------
+        # GLOBALIZE ALL EXISTING MAPS
+        #
+        # Older versions stored the Discord guild ID in guild_id.
+        # From now on every map belongs to GLOBAL_MAP_GUILD_ID.
+        # ----------------------------------------------------
+        await conn.execute("""
+            DROP INDEX IF EXISTS maps_guild_zone_number_unique
+        """)
+
+        await conn.execute("""
+            UPDATE maps
+            SET guild_id = $1
+        """, GLOBAL_MAP_GUILD_ID)
+
+        # ----------------------------------------------------
+        # Rebuild map numbers globally per zone.
+        #
+        # This prevents duplicate map numbers when maps from
+        # multiple old guilds are merged into the global database.
+        # Existing ordering is preserved as much as possible.
+        # ----------------------------------------------------
+        await conn.execute("""
+            WITH numbered AS (
+                SELECT
+                    id,
+                    ROW_NUMBER() OVER (
+                        PARTITION BY zone_name
+                        ORDER BY map_number ASC NULLS LAST, id ASC
+                    ) AS new_map_number
+                FROM maps
+            )
+            UPDATE maps AS m
+            SET map_number = numbered.new_map_number,
+                updated_at = NOW()
+            FROM numbered
+            WHERE m.id = numbered.id
+        """)
+
+        # ----------------------------------------------------
+        # Make map numbers unique globally per zone.
+        # ----------------------------------------------------
+        await conn.execute("""
+            CREATE UNIQUE INDEX IF NOT EXISTS
+            maps_guild_zone_number_unique
+            ON maps (guild_id, zone_name, map_number)
+        """)
         
         # ----------------------------------------------------
         # Give old maps map number 1
@@ -6591,23 +6659,6 @@ async def ensure_maps_table():
             UPDATE maps
             SET map_number = 1
             WHERE map_number IS NULL
-        """)
-
-        # ----------------------------------------------------
-        # Remove old one-map-per-zone constraint
-        # ----------------------------------------------------
-        await conn.execute("""
-            ALTER TABLE maps
-            DROP CONSTRAINT IF EXISTS maps_guild_id_zone_name_key
-        """)
-
-        # ----------------------------------------------------
-        # Make map numbers unique per guild/zone
-        # ----------------------------------------------------
-        await conn.execute("""
-            CREATE UNIQUE INDEX IF NOT EXISTS
-            maps_guild_zone_number_unique
-            ON maps (guild_id, zone_name, map_number)
         """)
 
 
@@ -6821,14 +6872,11 @@ class MapsView(discord.ui.View):
                     map_number,
                     map_image
                 FROM maps
-                WHERE (
-                    guild_id = $1
-                    OR guild_id = 1
-                )
+                WHERE guild_id = $1
                   AND zone_name = $2
                 ORDER BY map_number ASC
             """,
-            interaction.guild.id,
+            GLOBAL_MAP_GUILD_ID,
             self.selected_zone)
 
         if not rows:
@@ -6901,14 +6949,11 @@ class MapsView(discord.ui.View):
                     map_number,
                     map_image
                 FROM maps
-                WHERE (
-                    guild_id = $1
-                    OR guild_id = 1
-                )
+                WHERE guild_id = $1
                   AND zone_name = $2
                 ORDER BY map_number ASC
             """,
-            interaction.guild.id,
+            GLOBAL_MAP_GUILD_ID,
             self.selected_zone)
 
         if not rows:
@@ -7466,7 +7511,7 @@ async def wiki_map_exists(
               AND wiki_image_url = $3
             LIMIT 1
         """,
-        guild_id,
+        GLOBAL_MAP_GUILD_ID,
         zone_name,
         wiki_file_url)
 
@@ -7492,7 +7537,7 @@ async def get_next_map_number(
             WHERE guild_id = $1
               AND zone_name = $2
         """,
-        guild_id,
+        GLOBAL_MAP_GUILD_ID,
         zone_name)
 
 
@@ -7856,7 +7901,7 @@ async def update_single_zone_maps(
                   AND wiki_image_url = $3
                 LIMIT 1
             """,
-            guild.id,
+            GLOBAL_MAP_GUILD_ID,
             zone_name,
             wiki_file_url)
 
@@ -7913,7 +7958,7 @@ async def update_single_zone_maps(
                     WHERE guild_id = $1
                       AND zone_name = $2
                 """,
-                guild.id,
+                GLOBAL_MAP_GUILD_ID,
                 zone_name)
 
             # ------------------------------------------------
@@ -7983,6 +8028,8 @@ async def update_single_zone_maps(
                         map_image,
                         wiki_image_url,
                         map_msg_id,
+                        map_upload_guild_id,
+                        map_upload_channel_id,
                         added_by,
                         created_at,
                         updated_at
@@ -7995,16 +8042,20 @@ async def update_single_zone_maps(
                         $5,
                         $6,
                         $7,
+                        $8,
+                        $9,
                         NOW(),
                         NOW()
                     )
                 """,
-                guild.id,
+                GLOBAL_MAP_GUILD_ID,
                 zone_name,
                 next_map_number,
                 map_url,
                 wiki_file_url,
                 map_msg_id,
+                guild.id,
+                upload_channel.id,
                 str(user))
 
             new_maps += 1
@@ -8126,7 +8177,7 @@ async def zonemap_update(
     await ensure_maps_table()
 
     # ========================================================
-    # Get zones from THIS GUILD'S database
+    # Get zones from the GLOBAL map database
     # ========================================================
 
     async with db_pool.acquire() as conn:
@@ -8139,7 +8190,7 @@ async def zonemap_update(
               AND TRIM(zone_name) <> ''
             ORDER BY zone_name ASC
         """,
-        interaction.guild.id)
+        GLOBAL_MAP_GUILD_ID)
 
     zones = [
         row["zone_name"]
@@ -8308,7 +8359,7 @@ async def mapupdate(
                 # --------------------------------------------
 
                 if await wiki_map_exists(
-                    guild.id,
+                    GLOBAL_MAP_GUILD_ID,
                     zone_name,
                     wiki_file_url
                 ):
@@ -8347,7 +8398,7 @@ async def mapupdate(
 
                     next_map_number = (
                         await get_next_map_number(
-                            guild.id,
+                            GLOBAL_MAP_GUILD_ID,
                             zone_name
                         )
                     )
@@ -8420,6 +8471,8 @@ async def mapupdate(
                                 map_image,
                                 wiki_image_url,
                                 map_msg_id,
+                                map_upload_guild_id,
+                                map_upload_channel_id,
                                 added_by,
                                 created_at,
                                 updated_at
@@ -8432,16 +8485,20 @@ async def mapupdate(
                                 $5,
                                 $6,
                                 $7,
+                                $8,
+                                $9,
                                 NOW(),
                                 NOW()
                             )
                         """,
-                        guild.id,
+                        GLOBAL_MAP_GUILD_ID,
                         zone_name,
                         next_map_number,
                         map_url,
                         wiki_file_url,
                         map_msg_id,
+                        guild.id,
+                        upload_channel.id,
                         str(interaction.user))
 
                     new_maps += 1
@@ -8567,10 +8624,9 @@ async def maps(interaction: discord.Interaction):
             SELECT DISTINCT zone_name
             FROM maps
             WHERE guild_id = $1
-               OR guild_id = 1
             ORDER BY zone_name ASC
         """,
-        interaction.guild.id)
+        GLOBAL_MAP_GUILD_ID)
 
     zones = [
         row["zone_name"]
@@ -8695,7 +8751,7 @@ async def mapadd(
                 WHERE guild_id = $1
                   AND zone_name = $2
             """,
-            guild.id,
+            GLOBAL_MAP_GUILD_ID,
             zone_name)
 
         # ----------------------------------------------------
@@ -8735,6 +8791,8 @@ async def mapadd(
                     map_number,
                     map_image,
                     map_msg_id,
+                    map_upload_guild_id,
+                    map_upload_channel_id,
                     added_by,
                     created_at,
                     updated_at
@@ -8746,15 +8804,19 @@ async def mapadd(
                     $4,
                     $5,
                     $6,
+                    $7,
+                    $8,
                     NOW(),
                     NOW()
                 )
             """,
-            guild.id,
+            GLOBAL_MAP_GUILD_ID,
             zone_name,
             next_map_number,
             map_url,
             map_msg_id,
+            guild.id,
+            upload_channel.id,
             str(interaction.user))
 
         # ----------------------------------------------------
@@ -8832,7 +8894,9 @@ class ConfirmMapRemoveView(discord.ui.View):
 
         super().__init__(timeout=60)
 
-        self.guild_id = guild_id
+        # Kept for compatibility with the existing view.
+        # Map data itself is always GLOBAL_MAP_GUILD_ID.
+        self.guild_id = GLOBAL_MAP_GUILD_ID
         self.zone_name = zone_name
         self.map_number = map_number
 
@@ -8855,7 +8919,7 @@ class ConfirmMapRemoveView(discord.ui.View):
             await ensure_maps_table()
 
             # ------------------------------------------------
-            # Find map
+            # Find the GLOBAL map
             # ------------------------------------------------
 
             async with db_pool.acquire() as conn:
@@ -8866,16 +8930,15 @@ class ConfirmMapRemoveView(discord.ui.View):
                         zone_name,
                         map_number,
                         map_image,
-                        map_msg_id
+                        map_msg_id,
+                        map_upload_guild_id,
+                        map_upload_channel_id
                     FROM maps
-                    WHERE (
-                        guild_id = $1
-                        OR guild_id = 1
-                    )
+                    WHERE guild_id = $1
                       AND zone_name = $2
                       AND map_number = $3
                 """,
-                self.guild_id,
+                GLOBAL_MAP_GUILD_ID,
                 self.zone_name,
                 self.map_number)
 
@@ -8893,30 +8956,81 @@ class ConfirmMapRemoveView(discord.ui.View):
 
             # ------------------------------------------------
             # Delete uploaded Discord image
+            #
+            # New global records store the exact server/channel
+            # where the upload was created.
+            #
+            # Old records may not have those fields, so we fall
+            # back to the current server's upload channel.
             # ------------------------------------------------
 
-            upload_channel = await ensure_upload_channel1(
-                interaction.guild
-            )
-
             image_deleted = False
+            upload_channel = None
 
             if row["map_msg_id"]:
 
                 try:
 
-                    uploaded_message = (
-                        await upload_channel.fetch_message(
-                            row["map_msg_id"]
+                    upload_guild_id = row["map_upload_guild_id"]
+                    upload_channel_id = row["map_upload_channel_id"]
+
+                    if upload_channel_id:
+
+                        upload_channel = bot.get_channel(
+                            upload_channel_id
                         )
-                    )
 
-                    await uploaded_message.delete()
+                        if upload_channel is None:
 
-                    image_deleted = True
+                            upload_channel = await bot.fetch_channel(
+                                upload_channel_id
+                            )
+
+                    elif upload_guild_id:
+
+                        upload_guild = bot.get_guild(
+                            upload_guild_id
+                        )
+
+                        if upload_guild is not None:
+
+                            upload_channel = (
+                                await ensure_upload_channel1(
+                                    upload_guild
+                                )
+                            )
+
+                    else:
+
+                        # Old map record with no upload location.
+                        upload_channel = (
+                            await ensure_upload_channel1(
+                                interaction.guild
+                            )
+                        )
+
+                    if upload_channel is not None:
+
+                        uploaded_message = (
+                            await upload_channel.fetch_message(
+                                row["map_msg_id"]
+                            )
+                        )
+
+                        await uploaded_message.delete()
+
+                        image_deleted = True
+
+                    else:
+
+                        print(
+                            f"⚠️ Could not locate upload channel "
+                            f"for map message {row['map_msg_id']}"
+                        )
 
                 except discord.NotFound:
 
+                    # Message was already deleted.
                     image_deleted = True
 
                 except discord.Forbidden:
@@ -8934,7 +9048,7 @@ class ConfirmMapRemoveView(discord.ui.View):
                     )
 
             # ------------------------------------------------
-            # Delete database record and renumber maps
+            # Delete database record and renumber global maps
             # ------------------------------------------------
 
             async with db_pool.acquire() as conn:
@@ -8958,7 +9072,7 @@ class ConfirmMapRemoveView(discord.ui.View):
                           AND zone_name = $2
                         ORDER BY map_number ASC, id ASC
                     """,
-                    self.guild_id,
+                    GLOBAL_MAP_GUILD_ID,
                     self.zone_name)
 
                     # ----------------------------------------
@@ -9112,14 +9226,11 @@ async def mapremove(
                 zone_name,
                 map_number
             FROM maps
-            WHERE (
-                guild_id = $1
-                OR guild_id = 1
-            )
+            WHERE guild_id = $1
               AND zone_name = $2
               AND map_number = $3
         """,
-        interaction.guild.id,
+        GLOBAL_MAP_GUILD_ID,
         zone_name,
         map_number)
 
@@ -9140,7 +9251,7 @@ async def mapremove(
     # --------------------------------------------------------
 
     view = ConfirmMapRemoveView(
-        guild_id=interaction.guild.id,
+        guild_id=GLOBAL_MAP_GUILD_ID,
         zone_name=zone_name,
         map_number=map_number
     )
@@ -9160,6 +9271,7 @@ async def mapremove(
 # ============================================================
 # ==================== END MAP SYSTEM ========================
 # ============================================================
+
 
 # ============================================================
 # SPELLS SYSTEM
