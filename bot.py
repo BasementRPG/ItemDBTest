@@ -7495,6 +7495,698 @@ async def get_next_map_number(
         guild_id,
         zone_name)
 
+
+# ============================================================
+# ZONE MAP UPDATE SELECT
+# ============================================================
+
+class ZoneMapUpdateSelect(discord.ui.Select):
+
+    def __init__(self, parent_view):
+
+        self.parent_view = parent_view
+
+        start = self.parent_view.current_page * 25
+        end = start + 25
+
+        page_zones = (
+            self.parent_view.zones[start:end]
+        )
+
+        options = []
+
+        for zone in page_zones:
+
+            options.append(
+                discord.SelectOption(
+                    label=zone,
+                    value=zone
+                )
+            )
+
+        super().__init__(
+            placeholder="Select a zone to update",
+            options=options,
+            min_values=1,
+            max_values=1,
+            row=0
+        )
+
+    async def callback(
+        self,
+        interaction: discord.Interaction
+    ):
+
+        selected_zone = self.values[0]
+
+        await self.parent_view.update_selected_zone(
+            interaction,
+            selected_zone
+        )
+
+# ============================================================
+# ZONE MAP UPDATE VIEW
+# ============================================================
+
+class ZoneMapUpdateView(discord.ui.View):
+
+    def __init__(
+        self,
+        interaction: discord.Interaction,
+        zones
+    ):
+
+        super().__init__(timeout=900)
+
+        self.original_interaction = interaction
+
+        self.zones = zones
+
+        self.current_page = 0
+
+        self.update_zone_select()
+
+        self.update_buttons()
+
+    # --------------------------------------------------------
+    # Zone selector
+    # --------------------------------------------------------
+
+    def update_zone_select(self):
+
+        # Remove old selector
+        for child in list(self.children):
+
+            if isinstance(
+                child,
+                ZoneMapUpdateSelect
+            ):
+
+                self.remove_item(child)
+
+        # Add current page selector
+        self.add_item(
+            ZoneMapUpdateSelect(self)
+        )
+
+    # --------------------------------------------------------
+    # Navigation buttons
+    # --------------------------------------------------------
+
+    def update_buttons(self):
+
+        total_pages = max(
+            1,
+            math.ceil(
+                len(self.zones) / 25
+            )
+        )
+
+        self.previous_button.disabled = (
+            self.current_page <= 0
+        )
+
+        self.next_button.disabled = (
+            self.current_page >= total_pages - 1
+        )
+
+    # --------------------------------------------------------
+    # Refresh menu
+    # --------------------------------------------------------
+
+    async def refresh_page(
+        self,
+        interaction
+    ):
+
+        self.update_zone_select()
+
+        self.update_buttons()
+
+        total_pages = max(
+            1,
+            math.ceil(
+                len(self.zones) / 25
+            )
+        )
+
+        await interaction.response.edit_message(
+            content=(
+                "🗺️ **Select a zone to update:**\n\n"
+                f"Page **{self.current_page + 1}** "
+                f"of **{total_pages}**"
+            ),
+            embeds=[],
+            view=self
+        )
+
+    # --------------------------------------------------------
+    # Previous
+    # --------------------------------------------------------
+
+    @discord.ui.button(
+        label="Previous",
+        style=discord.ButtonStyle.secondary,
+        row=1
+    )
+    async def previous_button(
+        self,
+        interaction: discord.Interaction,
+        button: discord.ui.Button
+    ):
+
+        if self.current_page > 0:
+
+            self.current_page -= 1
+
+        await self.refresh_page(
+            interaction
+        )
+
+    # --------------------------------------------------------
+    # Next
+    # --------------------------------------------------------
+
+    @discord.ui.button(
+        label="Next",
+        style=discord.ButtonStyle.secondary,
+        row=1
+    )
+    async def next_button(
+        self,
+        interaction: discord.Interaction,
+        button: discord.ui.Button
+    ):
+
+        max_page = max(
+            0,
+            math.ceil(
+                len(self.zones) / 25
+            ) - 1
+        )
+
+        if self.current_page < max_page:
+
+            self.current_page += 1
+
+        await self.refresh_page(
+            interaction
+        )
+
+    # --------------------------------------------------------
+    # Update selected zone
+    # --------------------------------------------------------
+
+    async def update_selected_zone(
+        self,
+        interaction,
+        zone_name
+    ):
+
+        await interaction.response.defer(
+            ephemeral=True,
+            thinking=True
+        )
+
+        try:
+
+            result = await update_single_zone_maps(
+                interaction.guild,
+                interaction.user,
+                zone_name
+            )
+
+            await interaction.edit_original_response(
+                content=result,
+                view=None
+            )
+
+        except Exception as e:
+
+            print(
+                f"❌ Zone map update error: {e}"
+            )
+
+            import traceback
+
+            traceback.print_exc()
+
+            await interaction.edit_original_response(
+                content=(
+                    "❌ **Failed to update the zone.**\n\n"
+                    f"Error: `{e}`"
+                ),
+                view=None
+            )
+
+
+# ============================================================
+# UPDATE ONE ZONE
+# ============================================================
+
+async def update_single_zone_maps(
+    guild,
+    user,
+    zone_name
+):
+    """
+    Check one zone's wiki page for maps and add any maps
+    that are missing from the database.
+    """
+
+    await ensure_maps_table()
+
+    # ========================================================
+    # Find zone URL from the Zones page
+    # ========================================================
+
+    zones = await get_wiki_zones()
+
+    selected_zone = None
+
+    for zone in zones:
+
+        if zone["name"].lower() == zone_name.lower():
+
+            selected_zone = zone
+
+            break
+
+    if selected_zone is None:
+
+        return (
+            f"❌ **{zone_name}** could not be found "
+            f"on the wiki Zones page."
+        )
+
+    zone_name = selected_zone["name"]
+
+    zone_url = selected_zone["url"]
+
+    print(
+        f"🗺️ Updating zone: {zone_name}"
+    )
+
+    print(
+        f"🔗 {zone_url}"
+    )
+
+    # ========================================================
+    # Get maps from wiki
+    # ========================================================
+
+    wiki_maps = await get_zone_maps(
+        zone_url
+    )
+
+    if not wiki_maps:
+
+        return (
+            f"🗺️ **{zone_name}**\n\n"
+            f"No maps were found on the wiki page."
+        )
+
+    # ========================================================
+    # Get upload channel
+    # ========================================================
+
+    upload_channel = await ensure_upload_channel1(
+        guild
+    )
+
+    # ========================================================
+    # Statistics
+    # ========================================================
+
+    maps_found = len(wiki_maps)
+
+    existing_maps = 0
+
+    new_maps = 0
+
+    failed_maps = 0
+
+    new_map_names = []
+
+    failed_map_names = []
+
+    # ========================================================
+    # Process every wiki map
+    # ========================================================
+
+    for map_data in wiki_maps:
+
+        wiki_file_url = map_data[
+            "wiki_file_url"
+        ]
+
+        # ----------------------------------------------------
+        # Check whether this exact wiki map already exists
+        # ----------------------------------------------------
+
+        async with db_pool.acquire() as conn:
+
+            existing = await conn.fetchrow("""
+                SELECT
+                    id,
+                    map_number
+                FROM maps
+                WHERE guild_id = $1
+                  AND zone_name = $2
+                  AND wiki_image_url = $3
+                LIMIT 1
+            """,
+            guild.id,
+            zone_name,
+            wiki_file_url)
+
+        if existing:
+
+            existing_maps += 1
+
+            print(
+                f"   ✓ Already exists: "
+                f"{map_data['file_name']}"
+            )
+
+            continue
+
+        # ----------------------------------------------------
+        # New map
+        # ----------------------------------------------------
+
+        try:
+
+            print(
+                f"   🆕 New map: "
+                f"{map_data['file_name']}"
+            )
+
+            # ------------------------------------------------
+            # Download image
+            # ------------------------------------------------
+
+            image_bytes = (
+                await download_wiki_image(
+                    map_data
+                )
+            )
+
+            if not image_bytes:
+
+                raise RuntimeError(
+                    "Wiki returned an empty image."
+                )
+
+            # ------------------------------------------------
+            # Determine next map number
+            # ------------------------------------------------
+
+            async with db_pool.acquire() as conn:
+
+                next_map_number = await conn.fetchval("""
+                    SELECT COALESCE(
+                        MAX(map_number),
+                        0
+                    ) + 1
+                    FROM maps
+                    WHERE guild_id = $1
+                      AND zone_name = $2
+                """,
+                guild.id,
+                zone_name)
+
+            # ------------------------------------------------
+            # Create Discord file
+            # ------------------------------------------------
+
+            import io
+
+            file_buffer = io.BytesIO(
+                image_bytes
+            )
+
+            discord_file = discord.File(
+                file_buffer,
+                filename=map_data["file_name"]
+            )
+
+            # ------------------------------------------------
+            # Upload image
+            # ------------------------------------------------
+
+            uploaded_message = (
+                await upload_channel.send(
+                    file=discord_file,
+                    content=(
+                        f"🗺️ Map upload\n"
+                        f"Zone: **{zone_name}**\n"
+                        f"Map Number: "
+                        f"**{next_map_number}**\n"
+                        f"Wiki: "
+                        f"{wiki_file_url}\n"
+                        f"Source: **/zonemap_update**\n"
+                        f"Updated by: "
+                        f"{user.mention}"
+                    )
+                )
+            )
+
+            if not uploaded_message.attachments:
+
+                raise RuntimeError(
+                    "Discord did not return "
+                    "an uploaded attachment."
+                )
+
+            map_url = (
+                uploaded_message
+                .attachments[0]
+                .url
+            )
+
+            map_msg_id = (
+                uploaded_message.id
+            )
+
+            # ------------------------------------------------
+            # Save database record
+            # ------------------------------------------------
+
+            async with db_pool.acquire() as conn:
+
+                await conn.execute("""
+                    INSERT INTO maps (
+                        guild_id,
+                        zone_name,
+                        map_number,
+                        map_image,
+                        wiki_image_url,
+                        map_msg_id,
+                        added_by,
+                        created_at,
+                        updated_at
+                    )
+                    VALUES (
+                        $1,
+                        $2,
+                        $3,
+                        $4,
+                        $5,
+                        $6,
+                        $7,
+                        NOW(),
+                        NOW()
+                    )
+                """,
+                guild.id,
+                zone_name,
+                next_map_number,
+                map_url,
+                wiki_file_url,
+                map_msg_id,
+                str(user))
+
+            new_maps += 1
+
+            caption = (
+                map_data["caption"]
+                or map_data["file_name"]
+            )
+
+            new_map_names.append(
+                f"Map {next_map_number}: "
+                f"{caption}"
+            )
+
+            print(
+                f"   ✅ Added "
+                f"{zone_name} - "
+                f"Map {next_map_number}"
+            )
+
+        except Exception as e:
+
+            failed_maps += 1
+
+            failed_map_names.append(
+                map_data["file_name"]
+            )
+
+            print(
+                f"   ❌ Failed: "
+                f"{map_data['file_name']} - "
+                f"{e}"
+            )
+
+            import traceback
+
+            traceback.print_exc()
+
+    # ========================================================
+    # Build result
+    # ========================================================
+
+    result = (
+        f"🗺️ **Zone Map Update Complete**\n\n"
+        f"**Zone:** {zone_name}\n"
+        f"**Maps found on wiki:** {maps_found}\n"
+        f"**Already in database:** {existing_maps}\n"
+        f"**New maps added:** {new_maps}\n"
+        f"**Failed:** {failed_maps}"
+    )
+
+    # --------------------------------------------------------
+    # New maps
+    # --------------------------------------------------------
+
+    if new_map_names:
+
+        result += (
+            "\n\n**🆕 Maps Added:**\n"
+        )
+
+        for name in new_map_names:
+
+            result += f"• {name}\n"
+
+    # --------------------------------------------------------
+    # Failed maps
+    # --------------------------------------------------------
+
+    if failed_map_names:
+
+        result += (
+            "\n**❌ Maps That Failed:**\n"
+        )
+
+        for name in failed_map_names:
+
+            result += f"• {name}\n"
+
+    # --------------------------------------------------------
+    # Nothing new
+    # --------------------------------------------------------
+
+    if (
+        new_maps == 0
+        and failed_maps == 0
+    ):
+
+        result += (
+            "\n\n✅ The database already contains "
+            "all maps found on the wiki."
+        )
+
+    return result
+
+
+
+# ============================================================
+# /zonemap_update
+# ============================================================
+
+@bot.tree.command(
+    name="zonemap_update",
+    description="Check a specific zone for new maps."
+)
+async def zonemap_update(
+    interaction: discord.Interaction
+):
+
+    if interaction.guild is None:
+
+        await interaction.response.send_message(
+            "❌ This command can only be used in a server.",
+            ephemeral=True
+        )
+
+        return
+
+    await ensure_maps_table()
+
+    # ========================================================
+    # Get zones from THIS GUILD'S database
+    # ========================================================
+
+    async with db_pool.acquire() as conn:
+
+        rows = await conn.fetch("""
+            SELECT DISTINCT zone_name
+            FROM maps
+            WHERE guild_id = $1
+              AND zone_name IS NOT NULL
+              AND TRIM(zone_name) <> ''
+            ORDER BY zone_name ASC
+        """,
+        interaction.guild.id)
+
+    zones = [
+        row["zone_name"]
+        for row in rows
+    ]
+
+    # ========================================================
+    # No zones
+    # ========================================================
+
+    if not zones:
+
+        await interaction.response.send_message(
+            (
+                "❌ There are no zones in the map database "
+                "for this server yet."
+            ),
+            ephemeral=True
+        )
+
+        return
+
+    # ========================================================
+    # Create selector
+    # ========================================================
+
+    view = ZoneMapUpdateView(
+        interaction=interaction,
+        zones=zones
+    )
+
+    total_pages = max(
+        1,
+        math.ceil(len(zones) / 25)
+    )
+
+    await interaction.response.send_message(
+        (
+            "🗺️ **Select a zone to update:**\n\n"
+            f"Page **1** of **{total_pages}**\n"
+            f"Zones available: **{len(zones)}**"
+        ),
+        view=view,
+        ephemeral=True
+    )
+
+
 # ============================================================
 # /mapupdate
 # ============================================================
