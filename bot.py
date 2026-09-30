@@ -416,7 +416,7 @@ class ItemNameStartView(discord.ui.View):
         npc_msg_id,
         upload_channel_id
     ):
-        super().__init__(timeout=900)
+        super().__init__(timeout=None)
 
         self.db_pool = db_pool
         self.guild_id = guild_id
@@ -924,7 +924,7 @@ class WikiFoundDataView(discord.ui.View):
         item_image_attachment,
         npc_image_attachment
     ):
-        super().__init__(timeout=900)
+        super().__init__(timeout=None)
 
         self.item_name = item_name
         self.wiki_data = wiki_data or {}
@@ -1380,7 +1380,7 @@ class ItemNameCheckModal(discord.ui.Modal, title="Add Item to Database"):
         upload_channel_id=None
         
     ):
-        super().__init__(timeout=900)
+        super().__init__(timeout=None)
 
         self.db_pool = db_pool
         self.guild_id = guild_id
@@ -6730,7 +6730,7 @@ class MapsView(discord.ui.View):
 
     def __init__(self, interaction: discord.Interaction, zones):
 
-        super().__init__(timeout=900)
+        super().__init__(timeout=None)
 
         self.original_interaction = interaction
 
@@ -7601,7 +7601,7 @@ class ZoneMapUpdateView(discord.ui.View):
         zones
     ):
 
-        super().__init__(timeout=900)
+        super().__init__(timeout=None)
 
         self.original_interaction = interaction
 
@@ -8892,7 +8892,7 @@ class ConfirmMapRemoveView(discord.ui.View):
         map_number
     ):
 
-        super().__init__(timeout=60)
+        super().__init__(timeout=None)
 
         # Kept for compatibility with the existing view.
         # Map data itself is always GLOBAL_MAP_GUILD_ID.
@@ -10125,7 +10125,7 @@ class WikiSpellsClassView(View):
     def __init__(self):
 
         super().__init__(
-            timeout=300
+            timeout=None
         )
 
         self.add_item(
@@ -10353,7 +10353,7 @@ class SpellsSelectionView(View):
     ):
 
         super().__init__(
-            timeout=300
+            timeout=None
         )
 
         self.selected_class = selected_class
@@ -10807,7 +10807,7 @@ class SpellsResultsView(View):
     ):
 
         super().__init__(
-            timeout=300
+            timeout=None
         )
 
         self.class_code = class_code
@@ -11168,7 +11168,7 @@ class SpellsPrivateClassView(View):
     def __init__(self):
 
         super().__init__(
-            timeout=300
+            timeout=None
         )
 
         self.add_item(
@@ -11288,7 +11288,7 @@ class SpellsPrivateLevelView(View):
     ):
 
         super().__init__(
-            timeout=300
+            timeout=None
         )
 
         self.add_item(
